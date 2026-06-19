@@ -27,31 +27,36 @@ SRC_CONFIG_EXAMPLE = os.path.join(SCRIPT_DIR, "config.example.json")
 
 
 def find_python():
-    """Return (command_list, display) for the best available Python 3."""
-    # Prefer `py` launcher on Windows (handles PATH issues cleanly)
-    if platform.system() == "Windows":
-        py = shutil.which("py")
-        if py:
-            try:
-                r = subprocess.run(
-                    [py, "-3", "-c", "import sys; print(sys.version)"],
-                    capture_output=True, text=True, timeout=5
-                )
-                if r.returncode == 0:
-                    return [py, "-3"], f"{py} -3"
-            except Exception:
-                pass
+    """Return (command_list, display) for the best available Python 3.
 
-    # Absolute path of current interpreter
-    interp = sys.executable
-    if interp:
-        return [interp], interp
+    Prefer short, portable command names over absolute paths so the value
+    written into settings.json isn't machine-specific. Only fall back to
+    sys.executable (an absolute path) if no named command works.
+    """
+    def probe(cmd):
+        try:
+            r = subprocess.run(
+                cmd + ["-c", "import sys; assert sys.version_info >= (3,8)"],
+                capture_output=True, timeout=5
+            )
+            return r.returncode == 0
+        except Exception:
+            return False
 
-    # Fallback names
+    # Windows py launcher is system-level; use its name, not its full path
+    if platform.system() == "Windows" and shutil.which("py"):
+        if probe(["py", "-3"]):
+            return ["py", "-3"], "py -3"
+
+    # Standard named commands (cross-platform)
     for name in ("python3", "python"):
-        found = shutil.which(name)
-        if found:
-            return [found], found
+        if shutil.which(name) and probe([name]):
+            return [name], name
+
+    # Last resort: absolute path of the interpreter running this script
+    interp = sys.executable
+    if interp and probe([interp]):
+        return [interp], interp
 
     return None, None
 

@@ -45,7 +45,7 @@ DEFAULTS = {
     },
     "no_color": False,
     "cost": {
-        "show": False,
+        "show": True,
         "decimals": 4,
         # cost is an estimate, not a billed charge
     },
@@ -377,13 +377,13 @@ def render(data, cfg):
         pct_text = f"{pct:.1f}% ({_fmt_num(used_tokens)} / {_fmt_num(cw_size)})"
         line1_parts.append(c(pct_text, bar_color))
 
-    if segs.get("cost", True) and cost_cfg.get("show", False):
+    line1 = "  ".join(line1_parts)
+
+    if segs.get("cost", True) and cost_cfg.get("show", True):
         total_cost = data.get("cost", {}).get("total_cost_usd", 0) or 0
         dec = cost_cfg.get("decimals", 4)
-        cost_str = f"~${total_cost:.{dec}f}"
-        line1_parts.append(c(cost_str, colors.get("cost", "cyan")))
-
-    line1 = "  ".join(line1_parts)
+        cost_str = f"${total_cost:.{dec}f}"
+        line1 += " | " + c(cost_str, colors.get("cost", "cyan"))
 
     # ---- build line 2 ----
     cwd = data.get("workspace", {}).get("current_dir", os.getcwd())
