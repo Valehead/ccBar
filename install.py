@@ -97,7 +97,7 @@ def install(dry_run=False, no_verify=False, reset_config=False):
         sys.exit(1)
     print(f"  Python: {py_display}")
 
-    status_cmd = {"type": "command", "command": " ".join(py_cmd + [DEST_SCRIPT])}
+    status_cmd = {"type": "command", "command": " ".join(py_cmd + ["~/.claude/ccbar.py"])}
 
     # Always deploy the latest ccbar.py so re-runs pick up updates
     script_existed = os.path.isfile(DEST_SCRIPT)
