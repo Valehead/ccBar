@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-install.py - ccBar installer.
+install.py - ccBar installer. Safe to re-run after any update.
 
 Usage:
-  python install.py              Install ccBar
-  python install.py --dry-run    Show what would happen, don't write
-  python install.py --no-verify  Skip self-test after install
-  python install.py --uninstall  Remove ccBar from settings.json
+  python install.py                Install or update ccBar
+  python install.py --dry-run      Show what would happen, don't write
+  python install.py --no-verify    Skip self-test after install
+  python install.py --reset-config Overwrite your config with the latest example
+                                   (backs up your existing config first)
+  python install.py --uninstall    Remove ccBar from settings.json
 """
 
 import json
@@ -22,6 +24,7 @@ SETTINGS_PATH = os.path.join(CLAUDE_DIR, "settings.json")
 SETTINGS_BAK = os.path.join(CLAUDE_DIR, "settings.json.bak")
 DEST_SCRIPT = os.path.join(CLAUDE_DIR, "ccbar.py")
 DEST_CONFIG = os.path.join(CLAUDE_DIR, "ccbar.config.json")
+DEST_CONFIG_BAK = DEST_CONFIG + ".bak"
 SRC_SCRIPT = os.path.join(SCRIPT_DIR, "ccbar.py")
 SRC_CONFIG_EXAMPLE = os.path.join(SCRIPT_DIR, "config.example.json")
 
@@ -77,7 +80,6 @@ def save_settings(data, dry_run):
         print(f"[dry-run] would write {SETTINGS_PATH}:")
         print(content)
         return
-    # Backup first
     if os.path.isfile(SETTINGS_PATH):
         shutil.copy2(SETTINGS_PATH, SETTINGS_BAK)
         print(f"  Backed up settings to {SETTINGS_BAK}")
@@ -86,7 +88,7 @@ def save_settings(data, dry_run):
         f.write(content)
 
 
-def install(dry_run=False, no_verify=False):
+def install(dry_run=False, no_verify=False, reset_config=False):
     print("=== ccBar installer ===\n")
 
     py_cmd, py_display = find_python()
@@ -95,34 +97,46 @@ def install(dry_run=False, no_verify=False):
         sys.exit(1)
     print(f"  Python: {py_display}")
 
-    # Build the statusLine object Claude Code expects
     status_cmd = {"type": "command", "command": " ".join(py_cmd + [DEST_SCRIPT])}
 
-    # Copy ccbar.py
+    # Always deploy the latest ccbar.py so re-runs pick up updates
+    script_existed = os.path.isfile(DEST_SCRIPT)
     if dry_run:
-        print(f"[dry-run] would copy {SRC_SCRIPT} -> {DEST_SCRIPT}")
+        verb = "update" if script_existed else "install"
+        print(f"[dry-run] would {verb} ccbar.py -> {DEST_SCRIPT}")
     else:
         os.makedirs(CLAUDE_DIR, exist_ok=True)
         shutil.copy2(SRC_SCRIPT, DEST_SCRIPT)
-        print(f"  Copied ccbar.py -> {DEST_SCRIPT}")
+        verb = "Updated" if script_existed else "Installed"
+        print(f"  {verb} ccbar.py -> {DEST_SCRIPT}")
 
-    # Copy default config only if one doesn't already exist
-    if not os.path.isfile(DEST_CONFIG):
+    # Config: write on first install, or when --reset-config is passed.
+    # Otherwise preserve it — users edit this file to customize the bar.
+    config_existed = os.path.isfile(DEST_CONFIG)
+    if not config_existed or reset_config:
         if dry_run:
-            print(f"[dry-run] would copy {SRC_CONFIG_EXAMPLE} -> {DEST_CONFIG}")
+            verb = "reset" if (config_existed and reset_config) else "install"
+            print(f"[dry-run] would {verb} config -> {DEST_CONFIG}")
         else:
             if os.path.isfile(SRC_CONFIG_EXAMPLE):
+                if config_existed:
+                    shutil.copy2(DEST_CONFIG, DEST_CONFIG_BAK)
+                    print(f"  Backed up existing config to {DEST_CONFIG_BAK}")
                 shutil.copy2(SRC_CONFIG_EXAMPLE, DEST_CONFIG)
-                print(f"  Copied config.example.json -> {DEST_CONFIG} (ccbar.config.json)")
+                verb = "Reset" if config_existed else "Installed"
+                print(f"  {verb} config -> {DEST_CONFIG}")
     else:
-        print(f"  Config already exists at {DEST_CONFIG}, skipping.")
+        print(f"  Config preserved at {DEST_CONFIG}")
+        print(f"    (pass --reset-config to overwrite; your current config will be backed up)")
 
-    # Merge statusLine key into settings.json
+    # Always update statusLine — picks up command or format changes across versions
     settings = load_settings()
+    prev = settings.get("statusLine")
     settings["statusLine"] = status_cmd
     save_settings(settings, dry_run)
     if not dry_run:
-        print(f"  Set statusLine in {SETTINGS_PATH}")
+        verb = "Updated" if prev else "Added"
+        print(f"  {verb} statusLine in {SETTINGS_PATH}")
 
     # Self-test
     if not no_verify and not dry_run:
@@ -139,7 +153,6 @@ def install(dry_run=False, no_verify=False):
 def uninstall(dry_run=False):
     print("=== ccBar uninstaller ===\n")
 
-    # Remove statusLine key
     settings = load_settings()
     if "statusLine" in settings:
         del settings["statusLine"]
@@ -149,15 +162,14 @@ def uninstall(dry_run=False):
     else:
         print("  statusLine not present in settings.json, nothing to remove.")
 
-    # Restore from backup if present
     if not dry_run and os.path.isfile(SETTINGS_BAK):
         ans = input("  Restore settings.json from backup? [y/N] ").strip().lower()
         if ans == "y":
             shutil.copy2(SETTINGS_BAK, SETTINGS_PATH)
             print(f"  Restored from {SETTINGS_BAK}")
 
-    # Optionally remove files
-    for path in [DEST_SCRIPT, DEST_CONFIG]:
+    cache_path = os.path.expanduser("~/.claude/.ccbar-cache.json")
+    for path in [DEST_SCRIPT, DEST_CONFIG, cache_path]:
         if os.path.isfile(path):
             if dry_run:
                 print(f"[dry-run] would remove {path}")
@@ -174,11 +186,12 @@ def main():
     args = sys.argv[1:]
     dry_run = "--dry-run" in args
     no_verify = "--no-verify" in args
+    reset_config = "--reset-config" in args
 
     if "--uninstall" in args:
         uninstall(dry_run=dry_run)
     else:
-        install(dry_run=dry_run, no_verify=no_verify)
+        install(dry_run=dry_run, no_verify=no_verify, reset_config=reset_config)
 
 
 if __name__ == "__main__":

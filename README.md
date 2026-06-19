@@ -30,15 +30,24 @@ cd ccBar
 python install.py
 ```
 
-The installer:
+The installer is safe to re-run after any update — just `git pull` and run it again.
+
+What it does each time:
 
 1. Detects the correct Python invocation (prefers the Windows `py` launcher so a missing `python` on PATH never silently breaks the bar).
-2. Copies `ccbar.py` to `~/.claude/ccbar.py`.
-3. Copies `config.example.json` to `~/.claude/ccbar.config.json` (only if one doesn't already exist).
-4. Merges the `statusLine` key into `~/.claude/settings.json`, preserving all other keys and backing the file up to `settings.json.bak` first.
+2. Always copies the latest `ccbar.py` to `~/.claude/ccbar.py` (picks up script changes).
+3. Copies `config.example.json` to `~/.claude/ccbar.config.json` on first install only — your config is preserved on re-runs so customizations are never lost.
+4. Always updates the `statusLine` key in `~/.claude/settings.json`, preserving all other keys and backing the file up to `settings.json.bak` first (picks up command or format changes).
 5. Runs a self-test to confirm the renderer works.
 
-Restart Claude Code after installing.
+Restart Claude Code after installing or updating.
+
+### Updating
+
+```sh
+git pull
+python install.py
+```
 
 ### Options
 
@@ -46,6 +55,7 @@ Restart Claude Code after installing.
 |------|--------|
 | `--dry-run` | Print what would change; write nothing |
 | `--no-verify` | Skip self-test |
+| `--reset-config` | Overwrite your config with the latest example (backs up existing first) |
 | `--uninstall` | Remove `statusLine` from settings, optionally restore backup and remove files |
 
 ---
