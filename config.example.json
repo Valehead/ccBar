@@ -1,0 +1,64 @@
+{
+  "_comment": "ccBar configuration. Copy to ~/.claude/ccbar.config.json. All fields optional — missing keys fall back to defaults.",
+
+  "segments": {
+    "_comment": "Toggle each display segment on or off.",
+    "model": true,
+    "context_bar": true,
+    "context_pct": true,
+    "cost": false,
+    "git_branch": true,
+    "git_dirty": true,
+    "git_changes": true
+  },
+
+  "bar": {
+    "_comment": "The fill/empty characters can be any UTF-8 glyph or ASCII fallback.",
+    "width": 20,
+    "filled_char": "█",
+    "empty_char": "░",
+    "thresholds": {
+      "_comment": "Percentages. green up to this value, yellow up to the next, red above yellow.",
+      "green": 60,
+      "yellow": 80
+    }
+  },
+
+  "colors": {
+    "_comment": "Valid values: reset bold black red green yellow blue magenta cyan white.",
+    "model": "bold",
+    "bar_green": "green",
+    "bar_yellow": "yellow",
+    "bar_red": "red",
+    "context_text": "reset",
+    "cost": "cyan",
+    "branch": "cyan",
+    "dirty": "yellow",
+    "changes": "reset"
+  },
+
+  "no_color": false,
+
+  "cost": {
+    "_comment": "Cost display is an estimate only and does not reflect your billed charge.",
+    "show": false,
+    "decimals": 4
+  },
+
+  "git": {
+    "_comment": "line_counts: use `git diff --numstat` for staged/unstaged (slower). dirty_marker: string shown when repo is dirty. timeout_ms: per-command git timeout. cache: skip git when .git/HEAD and .git/index haven't changed.",
+    "line_counts": false,
+    "dirty_marker": "*",
+    "timeout_ms": 800,
+    "cache": true
+  },
+
+  "icons": {
+    "_comment": "branch: glyph before branch name (empty string = no icon). dirty: overrides dirty_marker when set. staged/unstaged: labels. ascii_fallback: force plain-text icons.",
+    "branch": "",
+    "dirty": null,
+    "staged": "S",
+    "unstaged": "U",
+    "ascii_fallback": false
+  }
+}
