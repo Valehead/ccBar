@@ -6,7 +6,7 @@
     "model": true,
     "context_bar": true,
     "context_pct": true,
-    "cost": false,
+    "cost": true,
     "git_branch": true,
     "git_dirty": true,
     "git_changes": true
@@ -41,7 +41,7 @@
 
   "cost": {
     "_comment": "Cost display is an estimate only and does not reflect your billed charge.",
-    "show": false,
+    "show": true,
     "decimals": 4
   },
 
