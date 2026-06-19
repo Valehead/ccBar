@@ -90,8 +90,8 @@ def install(dry_run=False, no_verify=False):
         sys.exit(1)
     print(f"  Python: {py_display}")
 
-    # Build the status line command string
-    status_cmd = " ".join(py_cmd + [DEST_SCRIPT])
+    # Build the statusLine object Claude Code expects
+    status_cmd = {"type": "command", "command": " ".join(py_cmd + [DEST_SCRIPT])}
 
     # Copy ccbar.py
     if dry_run:

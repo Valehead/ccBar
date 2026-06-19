@@ -347,6 +347,16 @@ def render(data, cfg):
         model_raw = model_raw[: model_raw.rfind("(")].strip()
 
     # ---- build line 1 ----
+    thresh = bar_cfg.get("thresholds", {})
+    t_green = thresh.get("green", 60)
+    t_yellow = thresh.get("yellow", 80)
+    if pct <= t_green:
+        bar_color = colors.get("bar_green", "green")
+    elif pct <= t_yellow:
+        bar_color = colors.get("bar_yellow", "yellow")
+    else:
+        bar_color = colors.get("bar_red", "red")
+
     line1_parts = []
 
     if segs.get("model", True) and model_raw:
@@ -356,26 +366,16 @@ def render(data, cfg):
         bar_width = bar_cfg.get("width", 20)
         filled_char = bar_cfg.get("filled_char", "█")
         empty_char = bar_cfg.get("empty_char", "░")
-        thresh = bar_cfg.get("thresholds", {})
-        t_green = thresh.get("green", 60)
-        t_yellow = thresh.get("yellow", 80)
 
         filled = int(pct / 100 * bar_width)
         filled = max(0, min(filled, bar_width))
         bar_str = filled_char * filled + empty_char * (bar_width - filled)
 
-        if pct <= t_green:
-            bar_color = colors.get("bar_green", "green")
-        elif pct <= t_yellow:
-            bar_color = colors.get("bar_yellow", "yellow")
-        else:
-            bar_color = colors.get("bar_red", "red")
-
-        line1_parts.append("[" + c(bar_str, bar_color) + "]")
+        line1_parts.append(c(bar_str, bar_color))
 
     if segs.get("context_pct", True):
         pct_text = f"{pct:.1f}% ({_fmt_num(used_tokens)} / {_fmt_num(cw_size)})"
-        line1_parts.append(c(pct_text, colors.get("context_text", "reset")))
+        line1_parts.append(c(pct_text, bar_color))
 
     if segs.get("cost", True) and cost_cfg.get("show", False):
         total_cost = data.get("cost", {}).get("total_cost_usd", 0) or 0
