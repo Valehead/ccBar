@@ -56,8 +56,8 @@ DEFAULTS = {
         "cache": True,
     },
     "icons": {
-        "branch": "",
-        "folder": "",
+        "branch": "🌿",
+        "folder": "📁",
         "dirty": None,
         "staged": "S",
         "unstaged": "U",
@@ -400,13 +400,13 @@ def render(data, cfg):
 
     if folder:
         ascii_fallback = icons.get("ascii_fallback", False)
-        folder_icon = icons.get("folder", "")
+        folder_icon = icons.get("folder", "📁")
         folder_prefix = "" if (ascii_fallback or not folder_icon) else folder_icon + " "
         line2_parts.append(folder_prefix + folder)
 
     if segs.get("git_branch", True) and branch:
         ascii_fallback = icons.get("ascii_fallback", False)
-        branch_icon = icons.get("branch", "")
+        branch_icon = icons.get("branch", "🌿")
         if ascii_fallback or not branch_icon:
             branch_icon = ""
         else:
