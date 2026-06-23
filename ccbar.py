@@ -392,7 +392,7 @@ def render(data, cfg):
 
     line2_parts = []
 
-    folder = git_info.get("repo") or os.path.basename(cwd)
+    folder = os.path.basename(cwd)
     branch = git_info.get("branch")
     is_dirty = git_info.get("dirty", False)
     staged = git_info.get("staged", 0)
