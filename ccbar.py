@@ -57,6 +57,7 @@ DEFAULTS = {
     },
     "icons": {
         "branch": "",
+        "folder": "",
         "dirty": None,
         "staged": "S",
         "unstaged": "U",
@@ -360,7 +361,7 @@ def render(data, cfg):
     line1_parts = []
 
     if segs.get("model", True) and model_raw:
-        line1_parts.append(c(model_raw, "bold"))
+        line1_parts.append(c(f"[{model_raw}]", "bold"))
 
     if segs.get("context_bar", True):
         bar_width = bar_cfg.get("width", 20)
@@ -398,7 +399,10 @@ def render(data, cfg):
     unstaged = git_info.get("unstaged", 0)
 
     if folder:
-        line2_parts.append(folder)
+        ascii_fallback = icons.get("ascii_fallback", False)
+        folder_icon = icons.get("folder", "")
+        folder_prefix = "" if (ascii_fallback or not folder_icon) else folder_icon + " "
+        line2_parts.append(folder_prefix + folder)
 
     if segs.get("git_branch", True) and branch:
         ascii_fallback = icons.get("ascii_fallback", False)
