@@ -4,9 +4,9 @@
 import io
 import json
 import os
+import re
 import subprocess
 import sys
-import time
 
 # Force UTF-8 output on Windows where the default codepage may reject block chars
 if hasattr(sys.stdout, "buffer"):
@@ -50,10 +50,8 @@ DEFAULTS = {
         # cost is an estimate, not a billed charge
     },
     "git": {
-        "line_counts": False,
         "dirty_marker": "*",
         "timeout_ms": 800,
-        "cache": True,
     },
     "icons": {
         "branch": "🌿",
@@ -123,47 +121,13 @@ def load_config():
 
 
 # ---------------------------------------------------------------------------
-# Git cache
+# Git helpers
 # ---------------------------------------------------------------------------
 
-_CACHE_PATH = os.path.expanduser("~/.claude/.ccbar-cache.json")
-
-
-def _git_mtimes(repo_root):
-    head = os.path.join(repo_root, ".git", "HEAD")
-    idx = os.path.join(repo_root, ".git", "index")
-    try:
-        mt_head = os.path.getmtime(head)
-    except OSError:
-        mt_head = 0
-    try:
-        mt_idx = os.path.getmtime(idx)
-    except OSError:
-        mt_idx = 0
-    return mt_head, mt_idx
-
-
-def _load_cache():
-    try:
-        with open(_CACHE_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-
-def _save_cache(data):
-    try:
-        with open(_CACHE_PATH, "w", encoding="utf-8") as f:
-            json.dump(data, f)
-    except Exception:
-        pass
-
-
-def _run_git(args, cwd, timeout_ms):
+def _run_git(args, timeout_ms):
     try:
         r = subprocess.run(
             ["git"] + args,
-            cwd=cwd,
             capture_output=True,
             text=True,
             timeout=timeout_ms / 1000,
@@ -175,132 +139,24 @@ def _run_git(args, cwd, timeout_ms):
     return None
 
 
-def _parse_porcelain_v2(output):
-    staged = 0
-    unstaged = 0
-    is_dirty = False
-    for line in output.splitlines():
-        if line.startswith("# "):
-            continue
-        if line.startswith("? "):
-            unstaged += 1
-            is_dirty = True
-            continue
-        if line.startswith("! "):
-            continue
-        if line.startswith("1 ") or line.startswith("2 ") or line.startswith("u "):
-            parts = line.split(" ")
-            if len(parts) < 2:
-                continue
-            xy = parts[1]
-            x = xy[0] if len(xy) > 0 else "."
-            y = xy[1] if len(xy) > 1 else "."
-            if x != "." and x != "?":
-                staged += 1
-                is_dirty = True
-            if y != "." and y != "?":
-                unstaged += 1
-                is_dirty = True
-    return is_dirty, staged, unstaged
+def _parse_shortstat(output):
+    ins = dels = 0
+    if output:
+        m = re.search(r'(\d+) insertion', output)
+        if m:
+            ins = int(m.group(1))
+        m = re.search(r'(\d+) deletion', output)
+        if m:
+            dels = int(m.group(1))
+    return ins, dels
 
 
-def _parse_numstat(output):
-    total = 0
-    for line in output.splitlines():
-        parts = line.split("\t")
-        if len(parts) >= 2:
-            try:
-                total += int(parts[0])
-            except ValueError:
-                pass
-            try:
-                total += int(parts[1])
-            except ValueError:
-                pass
-    return total
-
-
-def get_git_info(cwd, cfg):
-    git_cfg = cfg.get("git", {})
-    use_cache = git_cfg.get("cache", True)
-    timeout_ms = git_cfg.get("timeout_ms", 800)
-    line_counts = git_cfg.get("line_counts", False)
-
-    empty = {"repo": None, "branch": None, "dirty": False, "staged": 0, "unstaged": 0}
-
-    # Find repo root
-    root_out = _run_git(["rev-parse", "--show-toplevel"], cwd, timeout_ms)
-    if not root_out:
-        return empty
-
-    repo_root = root_out
-    repo_name = os.path.basename(repo_root)
-
-    mt_head, mt_idx = _git_mtimes(repo_root)
-    cache_key = repo_root
-
-    if use_cache:
-        cache = _load_cache()
-        entry = cache.get(cache_key)
-        if entry:
-            if entry.get("mt_head") == mt_head and entry.get("mt_idx") == mt_idx:
-                return {
-                    "repo": repo_name,
-                    "branch": entry.get("branch"),
-                    "dirty": entry.get("dirty", False),
-                    "staged": entry.get("staged", 0),
-                    "unstaged": entry.get("unstaged", 0),
-                }
-    else:
-        cache = {}
-
-    # Run git commands for fresh data
-    # Get branch in same call as toplevel
-    toplevel_branch = _run_git(
-        ["rev-parse", "--show-toplevel", "--abbrev-ref", "HEAD"], cwd, timeout_ms
-    )
-    branch = None
-    if toplevel_branch:
-        lines = toplevel_branch.splitlines()
-        if len(lines) >= 2:
-            branch = lines[1].strip()
-
-    # Get status
-    porcelain = _run_git(
-        ["status", "--porcelain=v2", "--branch"], cwd, timeout_ms
-    )
-    is_dirty = False
-    staged = 0
-    unstaged = 0
-    if porcelain is not None:
-        is_dirty, staged, unstaged = _parse_porcelain_v2(porcelain)
-
-    if line_counts and is_dirty:
-        unstaged_lines = _run_git(["diff", "--numstat"], cwd, timeout_ms)
-        staged_lines = _run_git(["diff", "--cached", "--numstat"], cwd, timeout_ms)
-        unstaged = _parse_numstat(unstaged_lines) if unstaged_lines else unstaged
-        staged = _parse_numstat(staged_lines) if staged_lines else staged
-
-    result = {
-        "repo": repo_name,
-        "branch": branch,
-        "dirty": is_dirty,
-        "staged": staged,
-        "unstaged": unstaged,
-    }
-
-    if use_cache:
-        cache[cache_key] = {
-            "mt_head": mt_head,
-            "mt_idx": mt_idx,
-            "branch": branch,
-            "dirty": is_dirty,
-            "staged": staged,
-            "unstaged": unstaged,
-        }
-        _save_cache(cache)
-
-    return result
+def get_git_info(cfg):
+    timeout_ms = cfg.get("git", {}).get("timeout_ms", 800)
+    branch = _run_git(["branch", "--show-current"], timeout_ms) or ""
+    shortstat = _run_git(["diff", "--shortstat"], timeout_ms) or ""
+    ins, dels = _parse_shortstat(shortstat)
+    return {"branch": branch, "insertions": ins, "deletions": dels}
 
 
 # ---------------------------------------------------------------------------
@@ -388,15 +244,15 @@ def render(data, cfg):
 
     # ---- build line 2 ----
     cwd = data.get("workspace", {}).get("current_dir", os.getcwd())
-    git_info = get_git_info(cwd, cfg)
+    git_info = get_git_info(cfg)
 
     line2_parts = []
 
     folder = os.path.basename(cwd)
-    branch = git_info.get("branch")
-    is_dirty = git_info.get("dirty", False)
-    staged = git_info.get("staged", 0)
-    unstaged = git_info.get("unstaged", 0)
+    branch = git_info.get("branch", "")
+    ins = git_info.get("insertions", 0)
+    dels = git_info.get("deletions", 0)
+    is_dirty = bool(ins or dels)
 
     if folder:
         ascii_fallback = icons.get("ascii_fallback", False)
@@ -413,21 +269,13 @@ def render(data, cfg):
             branch_icon = branch_icon + " "
         line2_parts.append(c(branch_icon + branch, colors.get("branch", "cyan")))
 
-    if segs.get("git_dirty", True) and is_dirty:
-        dirty_marker = git_cfg.get("dirty_marker", "*")
-        icon_dirty = icons.get("dirty")
-        marker = icon_dirty if icon_dirty else dirty_marker
-        line2_parts.append(c(marker, colors.get("dirty", "yellow")))
-
-    if segs.get("git_changes", True) and (staged or unstaged):
-        staged_icon = icons.get("staged", "S")
-        unstaged_icon = icons.get("unstaged", "U")
+    if segs.get("git_changes", True) and (ins or dels):
         parts = []
-        if staged:
-            parts.append(f"{staged_icon}:{staged}")
-        if unstaged:
-            parts.append(f"{unstaged_icon}:{unstaged}")
-        line2_parts.append(c(" ".join(parts), colors.get("changes", "reset")))
+        if ins:
+            parts.append(c(f"+{ins}", "green"))
+        if dels:
+            parts.append(c(f"-{dels}", "red"))
+        line2_parts.append("/".join(parts))
 
     line2 = "  ".join(line2_parts)
 
