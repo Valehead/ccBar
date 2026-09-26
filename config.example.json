@@ -9,7 +9,8 @@
     "cost": true,
     "git_branch": true,
     "git_dirty": true,
-    "git_changes": true
+    "git_changes": true,
+    "retro": true
   },
 
   "bar": {
@@ -34,7 +35,8 @@
     "cost": "cyan",
     "branch": "cyan",
     "dirty": "yellow",
-    "changes": "reset"
+    "changes": "reset",
+    "retro": "magenta"
   },
 
   "no_color": false,
@@ -43,6 +45,13 @@
     "_comment": "Cost display is an estimate only and does not reflect your billed charge.",
     "show": true,
     "decimals": 4
+  },
+
+  "retro": {
+    "_comment": "Session retro. Fires once per session when context reaches threshold_tokens OR threshold_pct of the model's window, whichever comes first. The Stop hook then tells Claude to run the session-retro skill.",
+    "enabled": true,
+    "threshold_tokens": 400000,
+    "threshold_pct": 70
   },
 
   "git": {

@@ -7,10 +7,7 @@ import os
 import re
 import subprocess
 import sys
-
-# Force UTF-8 output on Windows where the default codepage may reject block chars
-if hasattr(sys.stdout, "buffer"):
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+import time
 
 # ---------------------------------------------------------------------------
 # Defaults
@@ -25,6 +22,7 @@ DEFAULTS = {
         "git_branch": True,
         "git_dirty": True,
         "git_changes": True,
+        "retro": True,
     },
     "bar": {
         "width": 20,
@@ -42,6 +40,7 @@ DEFAULTS = {
         "branch": "cyan",
         "dirty": "yellow",
         "changes": "reset",
+        "retro": "magenta",
     },
     "no_color": False,
     "cost": {
@@ -60,6 +59,11 @@ DEFAULTS = {
         "staged": "S",
         "unstaged": "U",
         "ascii_fallback": False,
+    },
+    "retro": {
+        "enabled": True,
+        "threshold_tokens": 400000,
+        "threshold_pct": 70,
     },
 }
 
@@ -167,7 +171,16 @@ def _fmt_num(n):
     return f"{int(n):,}"
 
 
-def render(data, cfg):
+def context_tokens(data):
+    cw = data.get("context_window") or {}
+    size = cw.get("context_window_size") or 200000
+    used = cw.get("total_input_tokens") or 0
+    if not used:
+        used = int((cw.get("used_percentage") or 0) / 100 * size)
+    return used, size
+
+
+def render(data, cfg, retro_fired=False):
     segs = cfg.get("segments", {})
     colors = cfg.get("colors", {})
     bar_cfg = cfg.get("bar", {})
@@ -181,21 +194,8 @@ def render(data, cfg):
         return _color(text, *codes, cfg=cfg)
 
     # ---- context window data ----
-    cw = data.get("context_window", {})
-    usage = data.get("current_usage", {})
-    cw_size = data.get("context_window_size") or cw.get("context_window_size") or 200000
-
-    inp = usage.get("input_tokens", 0) or 0
-    cache_create = usage.get("cache_creation_input_tokens", 0) or 0
-    cache_read = usage.get("cache_read_input_tokens", 0) or 0
-    used_tokens = inp + cache_create + cache_read
-
-    if used_tokens == 0:
-        pct_raw = cw.get("used_percentage", 0) or 0
-        used_tokens = int(pct_raw / 100 * cw_size)
-        pct = pct_raw
-    else:
-        pct = (used_tokens / cw_size * 100) if cw_size else 0
+    used_tokens, cw_size = context_tokens(data)
+    pct = (used_tokens / cw_size * 100) if cw_size else 0
 
     # ---- model ----
     model_raw = data.get("model", {}).get("display_name", "")
@@ -242,6 +242,10 @@ def render(data, cfg):
         cost_str = f"${total_cost:.{dec}f}"
         line1 += " | " + c(cost_str, colors.get("cost", "cyan"))
 
+    if segs.get("retro", True) and retro_fired:
+        label = "retro done" if icons.get("ascii_fallback", False) else "retro ✓"
+        line1 += " | " + c(label, colors.get("retro", "magenta"))
+
     # ---- build line 2 ----
     cwd = data.get("workspace", {}).get("current_dir", os.getcwd())
     git_info = get_git_info(cfg)
@@ -283,33 +287,136 @@ def render(data, cfg):
 
 
 # ---------------------------------------------------------------------------
+# Retro
+# ---------------------------------------------------------------------------
+
+STATE_DIR = os.path.expanduser("~/.claude/ccbar-state")
+STATE_MAX_AGE_DAYS = 7
+RETRO_SKILL = "session-retro"
+
+
+def threshold_crossed(tokens, window_size, retro_cfg):
+    if not retro_cfg.get("enabled", True):
+        return False
+    if tokens >= retro_cfg.get("threshold_tokens", 400000):
+        return True
+    pct = (tokens / window_size * 100) if window_size else 0
+    return pct >= retro_cfg.get("threshold_pct", 70)
+
+
+def stop_hook_output(payload, state, cfg):
+    if not cfg.get("retro", {}).get("enabled", True):
+        return None
+    if payload.get("stop_hook_active"):
+        return None
+    if not state.get("crossed") or state.get("retro_fired"):
+        return None
+    context = (
+        f"This session's context passed {state.get('tokens', 0):,} tokens. "
+        f"Before doing anything else, invoke the {RETRO_SKILL} skill with the Skill tool, "
+        f"passing args: session_id={payload.get('session_id', '')} "
+        f"transcript_path={payload.get('transcript_path', '')} cwd={payload.get('cwd', '')}"
+    )
+    return {"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": context}}
+
+
+def _state_path(session_id):
+    return os.path.join(STATE_DIR, f"{session_id}.json")
+
+
+def load_state(session_id):
+    path = _state_path(session_id)
+    if not os.path.isfile(path):
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_state(session_id, state):
+    os.makedirs(STATE_DIR, exist_ok=True)
+    path = _state_path(session_id)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(state, f)
+    # Atomic swap: the status line and the Stop hook can touch this file at the same moment
+    os.replace(tmp, path)
+
+
+def prune_state(now=None):
+    cutoff = (now or time.time()) - STATE_MAX_AGE_DAYS * 86400
+    for name in os.listdir(STATE_DIR):
+        path = os.path.join(STATE_DIR, name)
+        if os.path.getmtime(path) < cutoff:
+            os.remove(path)
+
+
+def update_retro_state(data, cfg):
+    session_id = data.get("session_id")
+    if not session_id:
+        return {}
+    state = load_state(session_id)
+    if state.get("crossed"):
+        return state
+    tokens, size = context_tokens(data)
+    if threshold_crossed(tokens, size, cfg.get("retro", {})):
+        state = {"crossed": True, "retro_fired": False, "tokens": tokens, "window_size": size}
+        save_state(session_id, state)
+    return state
+
+
+def run_stop_hook():
+    payload = json.loads(sys.stdin.read())
+    session_id = payload.get("session_id")
+    if not session_id:
+        return
+    cfg = load_config()
+    state = load_state(session_id)
+    out = stop_hook_output(payload, state, cfg)
+    if out is None:
+        return
+    # Saved before printing so a crash after the print can't fire the retro twice
+    state["retro_fired"] = True
+    save_state(session_id, state)
+    prune_state()
+    print(json.dumps(out))
+
+
+# ---------------------------------------------------------------------------
 # Self-test
 # ---------------------------------------------------------------------------
 
 MOCK_200K = {
+    "session_id": "selftest-200k",
     "model": {"display_name": "Claude Sonnet 4.6 (200k context)"},
     "workspace": {"current_dir": os.path.expanduser("~")},
     "cost": {"total_cost_usd": 0.0312},
-    "context_window": {"used_percentage": 45.2},
-    "current_usage": {
-        "input_tokens": 45000,
-        "cache_creation_input_tokens": 12000,
-        "cache_read_input_tokens": 33000,
+    "context_window": {
+        "total_input_tokens": 90000,
+        "context_window_size": 200000,
+        "used_percentage": 45.0,
+        "current_usage": {
+            "input_tokens": 45000,
+            "cache_creation_input_tokens": 12000,
+            "cache_read_input_tokens": 33000,
+        },
     },
-    "context_window_size": 200000,
 }
 
 MOCK_1M = {
+    "session_id": "selftest-1m",
     "model": {"display_name": "Claude Opus 4.8 (1M context)"},
     "workspace": {"current_dir": os.path.expanduser("~")},
     "cost": {"total_cost_usd": 1.2345},
-    "context_window": {"used_percentage": 82.1},
-    "current_usage": {
-        "input_tokens": 500000,
-        "cache_creation_input_tokens": 200000,
-        "cache_read_input_tokens": 121000,
+    "context_window": {
+        "total_input_tokens": 821000,
+        "context_window_size": 1000000,
+        "used_percentage": 82.1,
+        "current_usage": {
+            "input_tokens": 500000,
+            "cache_creation_input_tokens": 200000,
+            "cache_read_input_tokens": 121000,
+        },
     },
-    "context_window_size": 1000000,
 }
 
 
@@ -333,14 +440,26 @@ def selftest():
 # ---------------------------------------------------------------------------
 
 def main():
+    # Force UTF-8 output on Windows where the default codepage may reject block chars
+    if hasattr(sys.stdout, "buffer"):
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+
     if "--selftest" in sys.argv:
         sys.exit(0 if selftest() else 1)
 
+    if "--stop-hook" in sys.argv:
+        try:
+            run_stop_hook()
+        except Exception as e:
+            print(f"ccbar --stop-hook failed: {e!r}", file=sys.stderr)
+            sys.exit(1)
+        sys.exit(0)
+
     try:
-        raw = sys.stdin.read()
-        data = json.loads(raw)
+        data = json.loads(sys.stdin.read())
         cfg = load_config()
-        print(render(data, cfg))
+        state = update_retro_state(data, cfg)
+        print(render(data, cfg, retro_fired=state.get("retro_fired", False)))
     except Exception:
         print("\n")
         sys.exit(0)

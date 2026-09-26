@@ -27,6 +27,11 @@ DEST_CONFIG = os.path.join(CLAUDE_DIR, "ccbar.config.json")
 DEST_CONFIG_BAK = DEST_CONFIG + ".bak"
 SRC_SCRIPT = os.path.join(SCRIPT_DIR, "ccbar.py")
 SRC_CONFIG_EXAMPLE = os.path.join(SCRIPT_DIR, "config.example.json")
+SRC_SKILL = os.path.join(SCRIPT_DIR, "skills", "session-retro", "SKILL.md")
+DEST_SKILL_DIR = os.path.join(CLAUDE_DIR, "skills", "session-retro")
+DEST_SKILL = os.path.join(DEST_SKILL_DIR, "SKILL.md")
+STATE_DIR = os.path.join(CLAUDE_DIR, "ccbar-state")
+STOP_HOOK_MARKER = "ccbar.py --stop-hook"
 
 
 def find_python():
@@ -88,6 +93,35 @@ def save_settings(data, dry_run):
         f.write(content)
 
 
+def _is_ccbar_stop_hook(hook):
+    return STOP_HOOK_MARKER in hook.get("command", "")
+
+
+def remove_stop_hook(settings):
+    stop = settings.get("hooks", {}).get("Stop", [])
+    kept = []
+    for group in stop:
+        hooks = [h for h in group.get("hooks", []) if not _is_ccbar_stop_hook(h)]
+        if hooks:
+            kept.append({**group, "hooks": hooks})
+    changed = kept != stop
+    if changed:
+        if kept:
+            settings["hooks"]["Stop"] = kept
+        else:
+            del settings["hooks"]["Stop"]
+            if not settings["hooks"]:
+                del settings["hooks"]
+    return changed
+
+
+def upsert_stop_hook(settings, command):
+    remove_stop_hook(settings)
+    settings.setdefault("hooks", {}).setdefault("Stop", []).append(
+        {"hooks": [{"type": "command", "command": command, "timeout": 10}]}
+    )
+
+
 def install(dry_run=False, no_verify=False, reset_config=False):
     print("=== ccBar installer ===\n")
 
@@ -98,6 +132,7 @@ def install(dry_run=False, no_verify=False, reset_config=False):
     print(f"  Python: {py_display}")
 
     status_cmd = {"type": "command", "command": " ".join(py_cmd + ["~/.claude/ccbar.py"])}
+    stop_cmd = " ".join(py_cmd + ["~/.claude/ccbar.py", "--stop-hook"])
 
     # Always deploy the latest ccbar.py so re-runs pick up updates
     script_existed = os.path.isfile(DEST_SCRIPT)
@@ -109,6 +144,16 @@ def install(dry_run=False, no_verify=False, reset_config=False):
         shutil.copy2(SRC_SCRIPT, DEST_SCRIPT)
         verb = "Updated" if script_existed else "Installed"
         print(f"  {verb} ccbar.py -> {DEST_SCRIPT}")
+
+    skill_existed = os.path.isfile(DEST_SKILL)
+    if dry_run:
+        verb = "update" if skill_existed else "install"
+        print(f"[dry-run] would {verb} session-retro skill -> {DEST_SKILL}")
+    else:
+        os.makedirs(DEST_SKILL_DIR, exist_ok=True)
+        shutil.copy2(SRC_SKILL, DEST_SKILL)
+        verb = "Updated" if skill_existed else "Installed"
+        print(f"  {verb} session-retro skill -> {DEST_SKILL}")
 
     # Config: write on first install, or when --reset-config is passed.
     # Otherwise preserve it — users edit this file to customize the bar.
@@ -133,10 +178,12 @@ def install(dry_run=False, no_verify=False, reset_config=False):
     settings = load_settings()
     prev = settings.get("statusLine")
     settings["statusLine"] = status_cmd
+    upsert_stop_hook(settings, stop_cmd)
     save_settings(settings, dry_run)
     if not dry_run:
         verb = "Updated" if prev else "Added"
         print(f"  {verb} statusLine in {SETTINGS_PATH}")
+        print(f"  Registered Stop hook (session retro) in {SETTINGS_PATH}")
 
     # Self-test
     if not no_verify and not dry_run:
@@ -154,13 +201,20 @@ def uninstall(dry_run=False):
     print("=== ccBar uninstaller ===\n")
 
     settings = load_settings()
-    if "statusLine" in settings:
-        del settings["statusLine"]
+    removed_status = settings.pop("statusLine", None) is not None
+    removed_stop = remove_stop_hook(settings)
+    if removed_status or removed_stop:
         save_settings(settings, dry_run)
+    if removed_status:
         if not dry_run:
             print(f"  Removed statusLine from {SETTINGS_PATH}")
     else:
         print("  statusLine not present in settings.json, nothing to remove.")
+    if removed_stop:
+        if not dry_run:
+            print(f"  Removed Stop hook (session retro) from {SETTINGS_PATH}")
+    else:
+        print("  ccBar Stop hook not present in settings.json, nothing to remove.")
 
     if not dry_run and os.path.isfile(SETTINGS_BAK):
         ans = input("  Restore settings.json from backup? [y/N] ").strip().lower()
@@ -169,7 +223,7 @@ def uninstall(dry_run=False):
             print(f"  Restored from {SETTINGS_BAK}")
 
     cache_path = os.path.expanduser("~/.claude/.ccbar-cache.json")
-    for path in [DEST_SCRIPT, DEST_CONFIG, cache_path]:
+    for path in [DEST_SCRIPT, DEST_CONFIG, cache_path, DEST_SKILL]:
         if os.path.isfile(path):
             if dry_run:
                 print(f"[dry-run] would remove {path}")
@@ -178,6 +232,20 @@ def uninstall(dry_run=False):
                 if ans == "y":
                     os.remove(path)
                     print(f"  Removed {path}")
+
+    if not dry_run and os.path.isdir(DEST_SKILL_DIR) and not os.listdir(DEST_SKILL_DIR):
+        os.rmdir(DEST_SKILL_DIR)
+
+    if os.path.isdir(STATE_DIR):
+        if dry_run:
+            print(f"[dry-run] would remove {STATE_DIR}")
+        else:
+            ans = input(f"  Remove {STATE_DIR}? [y/N] ").strip().lower()
+            if ans == "y":
+                shutil.rmtree(STATE_DIR)
+                print(f"  Removed {STATE_DIR}")
+
+    print(f"  Kept {os.path.join(CLAUDE_DIR, 'retros')} (your retro files)")
 
     print("\nDone.")
 
