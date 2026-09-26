@@ -171,6 +171,10 @@ Once per session, when context reaches `threshold_tokens` or `threshold_pct` of 
 
 **Manual run.** `/session-retro` at any time.
 
+Once the retro has fired, line 1 of the bar shows a `retro ✓` marker:
+
+![ccBar status line showing the retro marker](docs/images/retro-marker.png)
+
 ```json
 "retro": {
   "enabled": true,
