@@ -8,7 +8,7 @@ A two-line ANSI status bar for [Claude Code](https://claude.ai/code), showing co
 
 ## What it shows
 
-**Line 1** — Model name (bold) + color-coded context bar + percentage and token counts + optional cost estimate.
+**Line 1** — Model name (bold) + color-coded context bar + percentage and token counts + optional cost estimate + `retro ✓` once the session retro has fired.
 
 **Line 2** — Repo/folder name + git branch + dirty marker + staged and unstaged change counts.
 
@@ -82,7 +82,8 @@ Copy `config.example.json` to `~/.claude/ccbar.config.json` (the installer does 
   "cost": false,
   "git_branch": true,
   "git_dirty": true,
-  "git_changes": true
+  "git_changes": true,
+  "retro": true
 }
 ```
 
@@ -160,6 +161,30 @@ Set `"ascii_fallback": true` to suppress any glyph icons and use plain labels on
 
 ---
 
+## Session retro
+
+Once per session, when context reaches `threshold_tokens` or `threshold_pct` of the model window (whichever comes first), the next response end triggers the `session-retro` skill. Claude reviews the session for what went wrong, what could have been done better, and what to improve next time.
+
+**How.** The status line writes `~/.claude/ccbar-state/<session_id>.json` at the crossing. The Stop hook (`ccbar.py --stop-hook`, registered by the installer) reads it and injects the instruction once. State is per session, so concurrent sessions don't interfere. State files older than 7 days are pruned.
+
+**Output.** A retro file in `~/.claude/retros/*.md`, plus numbered memory/CLAUDE.md proposals that are only applied on your approval.
+
+**Manual run.** `/session-retro` at any time.
+
+Once the retro has fired, line 1 of the bar shows a `retro ✓` marker:
+
+![ccBar status line showing the retro marker](docs/images/retro-marker.png)
+
+```json
+"retro": {
+  "enabled": true,
+  "threshold_tokens": 400000,
+  "threshold_pct": 70
+}
+```
+
+---
+
 ## Self-test
 
 ```sh
@@ -169,6 +194,12 @@ python ~/.claude/ccbar.py --selftest
 ```
 
 Feeds two mock payloads (200k and 1M context windows) through the renderer and prints the result.
+
+Unit tests:
+
+```sh
+py -3 -m unittest discover -s tests
+```
 
 ---
 
