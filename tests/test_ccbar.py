@@ -1,11 +1,12 @@
-import os, sys, tempfile, unittest
+import io, json, os, sys, tempfile, unittest
 from unittest import mock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import ccbar
 
 RETRO_CFG = {"enabled": True, "threshold_tokens": 400000, "threshold_pct": 70}
 CFG = {"retro": RETRO_CFG}
-CROSSED_STATE = {"crossed": True, "retro_fired": False, "tokens": 410000, "window_size": 1000000}
+CROSSED_STATE = {"window_size": 1000000, "events": {"retro": {"crossed": True, "fired": False, "tokens": 410000}}}
+FIRED_STATE = {"window_size": 1000000, "events": {"retro": {"crossed": True, "fired": True, "tokens": 410000}}}
 PAYLOAD = {
     "session_id": "abc12345",
     "transcript_path": "C:/t/abc12345.jsonl",
@@ -67,9 +68,7 @@ class StopHookOutputTests(unittest.TestCase):
         self.assertIsNone(ccbar.stop_hook_output(payload, CROSSED_STATE, CFG))
 
     def test_returns_none_when_already_fired(self):
-        state = {**CROSSED_STATE, "retro_fired": True}
-
-        self.assertIsNone(ccbar.stop_hook_output(PAYLOAD, state, CFG))
+        self.assertIsNone(ccbar.stop_hook_output(PAYLOAD, FIRED_STATE, CFG))
 
     def test_returns_none_when_not_crossed(self):
         self.assertIsNone(ccbar.stop_hook_output(PAYLOAD, {}, CFG))
@@ -108,6 +107,34 @@ class StateIoTests(unittest.TestCase):
     def test_load_missing_session_returns_empty(self):
         self.assertEqual(ccbar.load_state("missing"), {})
 
+    def test_load_converts_legacy_flat_file_to_retro_event(self):
+        legacy = {"crossed": True, "retro_fired": True, "tokens": 410000, "window_size": 1000000}
+        with open(os.path.join(self._tmp.name, "legacy.json"), "w", encoding="utf-8") as f:
+            json.dump(legacy, f)
+
+        loaded = ccbar.load_state("legacy")
+
+        self.assertEqual(loaded, FIRED_STATE)
+
+    def test_update_state_skips_write_when_unchanged(self):
+        ccbar.save_state("s1", CROSSED_STATE)
+        path = os.path.join(self._tmp.name, "s1.json")
+        os.utime(path, (1_700_000_000, 1_700_000_000))
+
+        ccbar.update_state("s1", lambda state: None)
+
+        self.assertEqual(os.path.getmtime(path), 1_700_000_000)
+
+    def test_update_state_preserves_fields_it_does_not_change(self):
+        ccbar.save_state("s1", {**CROSSED_STATE, "git": {"branch": "main"}})
+
+        def mark_fired(state):
+            state["events"]["retro"]["fired"] = True
+
+        ccbar.update_state("s1", mark_fired)
+
+        self.assertEqual(ccbar.load_state("s1"), {**FIRED_STATE, "git": {"branch": "main"}})
+
     def test_prune_removes_files_older_than_max_age(self):
         now = 1_800_000_000
         ccbar.save_state("old", CROSSED_STATE)
@@ -120,25 +147,62 @@ class StateIoTests(unittest.TestCase):
 
         self.assertEqual(os.listdir(self._tmp.name), ["fresh.json"])
 
-    def test_update_retro_state_writes_once_on_crossing(self):
-        below = ccbar.update_retro_state(_status_payload(100000), CFG)
+    def test_update_event_state_writes_once_on_crossing(self):
+        below = ccbar.update_event_state(_status_payload(100000), CFG)
         state_path = os.path.join(self._tmp.name, "sess-1.json")
         self.assertEqual(below, {})
         self.assertFalse(os.path.exists(state_path))
 
-        first = ccbar.update_retro_state(_status_payload(450000), CFG)
-        self.assertTrue(first["crossed"])
+        first = ccbar.update_event_state(_status_payload(450000), CFG)
+        self.assertTrue(first["events"]["retro"]["crossed"])
 
-        second = ccbar.update_retro_state(_status_payload(600000), CFG)
-        self.assertEqual(second["tokens"], 450000)
+        second = ccbar.update_event_state(_status_payload(600000), CFG)
+        self.assertEqual(second["events"]["retro"]["tokens"], 450000)
 
-    def test_update_retro_state_ignores_unsafe_session_id(self):
+    def test_update_event_state_ignores_unsafe_session_id(self):
         data = {**_status_payload(450000), "session_id": "../evil"}
 
-        state = ccbar.update_retro_state(data, CFG)
+        state = ccbar.update_event_state(data, CFG)
 
         self.assertEqual(state, {})
         self.assertEqual(os.listdir(self._tmp.name), [])
+
+
+class RunStopHookTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._orig_state_dir = ccbar.STATE_DIR
+        ccbar.STATE_DIR = self._tmp.name
+
+    def tearDown(self):
+        ccbar.STATE_DIR = self._orig_state_dir
+        self._tmp.cleanup()
+
+    def _run(self, payload):
+        stdin = io.StringIO(json.dumps(payload))
+        with mock.patch.object(ccbar, "load_config", return_value=CFG), \
+                mock.patch("sys.stdin", stdin), \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            ccbar.run_stop_hook()
+        return stdout.getvalue()
+
+    def test_fires_once_then_never_again(self):
+        ccbar.save_state(PAYLOAD["session_id"], CROSSED_STATE)
+
+        first = self._run(PAYLOAD)
+        second = self._run(PAYLOAD)
+
+        self.assertIn("session-retro", first)
+        self.assertEqual(second, "")
+        self.assertTrue(ccbar.load_state(PAYLOAD["session_id"])["events"]["retro"]["fired"])
+
+    def test_stop_hook_active_fires_nothing(self):
+        ccbar.save_state(PAYLOAD["session_id"], CROSSED_STATE)
+
+        out = self._run({**PAYLOAD, "stop_hook_active": True})
+
+        self.assertEqual(out, "")
+        self.assertFalse(ccbar.load_state(PAYLOAD["session_id"])["events"]["retro"]["fired"])
 
 
 class GitInfoTests(unittest.TestCase):
