@@ -31,11 +31,11 @@
     "bar_green": "green",
     "bar_yellow": "yellow",
     "bar_red": "red",
-    "context_text": "reset",
     "cost": "cyan",
     "branch": "cyan",
     "dirty": "yellow",
-    "changes": "reset",
+    "insertions": "green",
+    "deletions": "red",
     "retro": "magenta"
   },
 
@@ -55,19 +55,16 @@
   },
 
   "git": {
-    "_comment": "line_counts: use `git diff --numstat` for staged/unstaged (slower). dirty_marker: string shown when repo is dirty. timeout_ms: per-command git timeout. cache: skip git when .git/HEAD and .git/index haven't changed.",
-    "line_counts": false,
+    "_comment": "timeout_ms: per-command git timeout in milliseconds. dirty_marker: reserved for the upcoming dirty marker, not rendered yet.",
     "dirty_marker": "*",
-    "timeout_ms": 800,
-    "cache": true
+    "timeout_ms": 800
   },
 
   "icons": {
-    "_comment": "branch: glyph before branch name (empty string = no icon). dirty: overrides dirty_marker when set. staged/unstaged: labels. ascii_fallback: force plain-text icons.",
-    "branch": "",
+    "_comment": "branch: glyph before branch name (empty string = no icon). folder: glyph before folder name (empty string = no icon). dirty: reserved for the upcoming dirty marker, not rendered yet. ascii_fallback: force plain-text icons.",
+    "branch": "🌿",
+    "folder": "📁",
     "dirty": null,
-    "staged": "S",
-    "unstaged": "U",
     "ascii_fallback": false
   }
 }

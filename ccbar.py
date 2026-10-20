@@ -35,11 +35,11 @@ DEFAULTS = {
         "bar_green": "green",
         "bar_yellow": "yellow",
         "bar_red": "red",
-        "context_text": "reset",
         "cost": "cyan",
         "branch": "cyan",
         "dirty": "yellow",
-        "changes": "reset",
+        "insertions": "green",
+        "deletions": "red",
         "retro": "magenta",
     },
     "no_color": False,
@@ -56,8 +56,6 @@ DEFAULTS = {
         "branch": "🌿",
         "folder": "📁",
         "dirty": None,
-        "staged": "S",
-        "unstaged": "U",
         "ascii_fallback": False,
     },
     "retro": {
@@ -97,6 +95,12 @@ def _color(text, *codes, cfg=None):
     return "".join(parts) + text + _ANSI["reset"]
 
 
+def _sanitize_label(text, max_len=100):
+    text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
+    text = re.sub(r"[\x00-\x1f\x7f]", "", text)
+    return text[:max_len]
+
+
 # ---------------------------------------------------------------------------
 # Config loading
 # ---------------------------------------------------------------------------
@@ -128,13 +132,14 @@ def load_config():
 # Git helpers
 # ---------------------------------------------------------------------------
 
-def _run_git(args, timeout_ms):
+def _run_git(args, timeout_ms, cwd):
     try:
         r = subprocess.run(
             ["git"] + args,
             capture_output=True,
             text=True,
             timeout=timeout_ms / 1000,
+            cwd=cwd,
         )
         if r.returncode == 0:
             return r.stdout.strip()
@@ -155,10 +160,10 @@ def _parse_shortstat(output):
     return ins, dels
 
 
-def get_git_info(cfg):
+def get_git_info(cfg, cwd):
     timeout_ms = cfg.get("git", {}).get("timeout_ms", 800)
-    branch = _run_git(["branch", "--show-current"], timeout_ms) or ""
-    shortstat = _run_git(["diff", "--shortstat"], timeout_ms) or ""
+    branch = _run_git(["branch", "--show-current"], timeout_ms, cwd) or ""
+    shortstat = _run_git(["diff", "--shortstat", "HEAD"], timeout_ms, cwd) or ""
     ins, dels = _parse_shortstat(shortstat)
     return {"branch": branch, "insertions": ins, "deletions": dels}
 
@@ -217,7 +222,7 @@ def render(data, cfg, retro_fired=False):
     line1_parts = []
 
     if segs.get("model", True) and model_raw:
-        line1_parts.append(c(f"[{model_raw}]", "bold"))
+        line1_parts.append(c(f"[{model_raw}]", colors.get("model", "bold")))
 
     if segs.get("context_bar", True):
         bar_width = bar_cfg.get("width", 20)
@@ -248,12 +253,12 @@ def render(data, cfg, retro_fired=False):
 
     # ---- build line 2 ----
     cwd = data.get("workspace", {}).get("current_dir", os.getcwd())
-    git_info = get_git_info(cfg)
+    git_info = get_git_info(cfg, cwd)
 
     line2_parts = []
 
     folder = os.path.basename(cwd)
-    branch = git_info.get("branch", "")
+    branch = _sanitize_label(git_info.get("branch", ""))
     ins = git_info.get("insertions", 0)
     dels = git_info.get("deletions", 0)
     is_dirty = bool(ins or dels)
@@ -276,9 +281,9 @@ def render(data, cfg, retro_fired=False):
     if segs.get("git_changes", True) and (ins or dels):
         parts = []
         if ins:
-            parts.append(c(f"+{ins}", "green"))
+            parts.append(c(f"+{ins}", colors.get("insertions", "green")))
         if dels:
-            parts.append(c(f"-{dels}", "red"))
+            parts.append(c(f"-{dels}", colors.get("deletions", "red")))
         line2_parts.append("/".join(parts))
 
     line2 = "  ".join(line2_parts)
@@ -293,6 +298,7 @@ def render(data, cfg, retro_fired=False):
 STATE_DIR = os.path.expanduser("~/.claude/ccbar-state")
 STATE_MAX_AGE_DAYS = 7
 RETRO_SKILL = "session-retro"
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 
 def threshold_crossed(tokens, window_size, retro_cfg):
@@ -324,6 +330,12 @@ def _state_path(session_id):
     return os.path.join(STATE_DIR, f"{session_id}.json")
 
 
+def _safe_session_id(value):
+    if isinstance(value, str) and _SESSION_ID_RE.match(value):
+        return value
+    return None
+
+
 def load_state(session_id):
     path = _state_path(session_id)
     if not os.path.isfile(path):
@@ -351,7 +363,7 @@ def prune_state(now=None):
 
 
 def update_retro_state(data, cfg):
-    session_id = data.get("session_id")
+    session_id = _safe_session_id(data.get("session_id"))
     if not session_id:
         return {}
     state = load_state(session_id)
@@ -366,7 +378,7 @@ def update_retro_state(data, cfg):
 
 def run_stop_hook():
     payload = json.loads(sys.stdin.read())
-    session_id = payload.get("session_id")
+    session_id = _safe_session_id(payload.get("session_id"))
     if not session_id:
         return
     cfg = load_config()

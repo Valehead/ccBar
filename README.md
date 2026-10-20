@@ -10,7 +10,7 @@ A two-line ANSI status bar for [Claude Code](https://claude.ai/code), showing co
 
 **Line 1** — Model name (bold) + color-coded context bar + percentage and token counts + optional cost estimate + `retro ✓` once the session retro has fired.
 
-**Line 2** — Repo/folder name + git branch + dirty marker + staged and unstaged change counts.
+**Line 2** — Folder name + git branch + `+N/-N` line counts covering both staged and unstaged changes.
 
 Bar colors: green ≤ 60%, yellow ≤ 80%, red > 80% (thresholds configurable).
 
@@ -110,11 +110,11 @@ Valid values: `reset`, `bold`, `black`, `red`, `green`, `yellow`, `blue`, `magen
   "bar_green": "green",
   "bar_yellow": "yellow",
   "bar_red": "red",
-  "context_text": "reset",
   "cost": "cyan",
   "branch": "cyan",
   "dirty": "yellow",
-  "changes": "reset"
+  "insertions": "green",
+  "deletions": "red"
 }
 ```
 
@@ -135,24 +135,21 @@ The cost figure is an **estimate** taken from Claude Code's own tracking. It is 
 
 ```json
 "git": {
-  "line_counts": false,
   "dirty_marker": "*",
-  "timeout_ms": 800,
-  "cache": true
+  "timeout_ms": 800
 }
 ```
 
-- `line_counts`: switch staged/unstaged counts from file counts to line counts (runs two extra `git diff --numstat` commands when the cache is stale).
-- `cache`: skip git subprocesses entirely when `.git/HEAD` and `.git/index` haven't changed since the last refresh. Strongly recommended.
+- `timeout_ms`: cap on each git call, in milliseconds. A call that runs longer is dropped and its part of line 2 (branch or line counts) is left out.
+- `dirty_marker`: reserved for the upcoming dirty marker. Not rendered yet.
 
 ### Icons / glyphs
 
 ```json
 "icons": {
-  "branch": "",
+  "branch": "🌿",
+  "folder": "📁",
   "dirty": null,
-  "staged": "S",
-  "unstaged": "U",
   "ascii_fallback": false
 }
 ```
@@ -211,7 +208,7 @@ py -3 -m unittest discover -s tests
 
 **Git info missing.** Verify `git` is on PATH in the shell Claude Code inherits. On macOS the Xcode Command Line Tools may need to be installed (`xcode-select --install`).
 
-**Status line is slow.** Set `"cache": true` in the `git` section (it is the default). The cache key is the repo root + mtime of `.git/HEAD` and `.git/index`, so git commands only run when something actually changes.
+**Status line is slow.** Each git call is capped by `git.timeout_ms` (default 800). Lower it if git is slow in a large repo; a call that times out is left off the bar instead of holding it up.
 
 ---
 
