@@ -66,13 +66,14 @@
   },
 
   "git": {
-    "_comment": "timeout_ms: per-command git timeout in milliseconds. dirty_marker: reserved for the upcoming dirty marker, not rendered yet.",
+    "_comment": "timeout_ms: per-command git timeout in milliseconds. cache_ttl_ms: how long a git result is reused before git runs again. dirty_marker: text shown after the branch when there are uncommitted or untracked changes.",
     "dirty_marker": "*",
-    "timeout_ms": 800
+    "timeout_ms": 800,
+    "cache_ttl_ms": 3000
   },
 
   "icons": {
-    "_comment": "branch: glyph before branch name (empty string = no icon). folder: glyph before folder name (empty string = no icon). dirty: reserved for the upcoming dirty marker, not rendered yet. ascii_fallback: force plain-text icons.",
+    "_comment": "branch: glyph before branch name (empty string = no icon). folder: glyph before folder name (empty string = no icon). dirty: glyph used instead of git.dirty_marker when set (null = use dirty_marker). ascii_fallback: force plain-text icons.",
     "branch": "🌿",
     "folder": "📁",
     "dirty": null,

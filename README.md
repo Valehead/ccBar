@@ -10,7 +10,7 @@ A two-line ANSI status bar for [Claude Code](https://claude.ai/code), showing co
 
 **Line 1** — Model name (bold) + color-coded context bar + percentage and token counts + optional cost estimate + `retro ✓` once the session retro has fired + `handoff ✓` once the session handoff has fired.
 
-**Line 2** — Folder name + git branch + `+N/-N` line counts covering both staged and unstaged changes.
+**Line 2** — Folder name + git branch + a dirty marker (`*`) when anything is uncommitted, untracked files included + `+N/-N` line counts covering both staged and unstaged changes.
 
 Bar colors: green ≤ 60%, yellow ≤ 80%, red > 80% (thresholds configurable).
 
@@ -151,12 +151,14 @@ The cost figure is an **estimate** taken from Claude Code's own tracking. It is 
 ```json
 "git": {
   "dirty_marker": "*",
-  "timeout_ms": 800
+  "timeout_ms": 800,
+  "cache_ttl_ms": 3000
 }
 ```
 
 - `timeout_ms`: cap on each git call, in milliseconds. A call that runs longer is dropped and its part of line 2 (branch or line counts) is left out.
-- `dirty_marker`: reserved for the upcoming dirty marker. Not rendered yet.
+- `cache_ttl_ms`: how long a git result is reused, in milliseconds. ccBar caches branch, line counts and dirty state per session in `~/.claude/ccbar-state/<session>.json` and re-runs git once the TTL passes or the working directory changes. A cache hit runs no git. A commit, checkout or reset clears the marker right away (ccBar watches the timestamp of the repo's HEAD reflog); discarding changes without a commit can leave it up until the TTL passes.
+- `dirty_marker`: text drawn right after the branch (in `colors.dirty`) when `git status --porcelain` reports anything, untracked files included. Toggle with `segments.git_dirty`.
 
 ### Icons / glyphs
 
@@ -170,6 +172,8 @@ The cost figure is an **estimate** taken from Claude Code's own tracking. It is 
 ```
 
 Set `"ascii_fallback": true` to suppress any glyph icons and use plain labels only.
+
+`dirty`: glyph used instead of `git.dirty_marker` when set; ignored under `ascii_fallback`.
 
 ---
 
@@ -247,7 +251,7 @@ py -3 -m unittest discover -s tests
 
 **Git info missing.** Verify `git` is on PATH in the shell Claude Code inherits. On macOS the Xcode Command Line Tools may need to be installed (`xcode-select --install`).
 
-**Status line is slow.** Each git call is capped by `git.timeout_ms` (default 800). Lower it if git is slow in a large repo; a call that times out is left off the bar instead of holding it up.
+**Status line is slow.** Each git call is capped by `git.timeout_ms` (default 800). Lower it if git is slow in a large repo; a call that times out is left off the bar instead of holding it up. Git results are cached for `git.cache_ttl_ms` (default 3000); raise it to run git less often.
 
 ---
 
