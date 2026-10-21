@@ -4,11 +4,17 @@ install.py - ccBar installer. Safe to re-run after any update.
 
 Usage:
   python install.py                Install or update ccBar
+  python install.py --in-place     Run ccbar.py from this clone instead of copying it
+                                   into ~/.claude (for machines that block scripts there)
+  python install.py --copy         Copy ccbar.py into ~/.claude (the default; switches
+                                   back from --in-place)
   python install.py --dry-run      Show what would happen, don't write
   python install.py --no-verify    Skip self-test after install
   python install.py --reset-config Overwrite your config with the latest example
                                    (backs up your existing config first)
   python install.py --uninstall    Remove ccBar from settings.json
+
+With neither --in-place nor --copy, the mode of the existing install is kept.
 """
 
 import json
@@ -27,11 +33,9 @@ DEST_CONFIG = os.path.join(CLAUDE_DIR, "ccbar.config.json")
 DEST_CONFIG_BAK = DEST_CONFIG + ".bak"
 SRC_SCRIPT = os.path.join(SCRIPT_DIR, "ccbar.py")
 SRC_CONFIG_EXAMPLE = os.path.join(SCRIPT_DIR, "config.example.json")
-SRC_SKILL = os.path.join(SCRIPT_DIR, "skills", "session-retro", "SKILL.md")
-DEST_SKILL_DIR = os.path.join(CLAUDE_DIR, "skills", "session-retro")
-DEST_SKILL = os.path.join(DEST_SKILL_DIR, "SKILL.md")
+SRC_SKILLS_DIR = os.path.join(SCRIPT_DIR, "skills")
+DEST_SKILLS_DIR = os.path.join(CLAUDE_DIR, "skills")
 STATE_DIR = os.path.join(CLAUDE_DIR, "ccbar-state")
-STOP_HOOK_MARKER = "ccbar.py --stop-hook"
 
 
 def find_python():
@@ -93,15 +97,47 @@ def save_settings(data, dry_run):
         f.write(content)
 
 
-def _is_ccbar_stop_hook(hook):
-    return STOP_HOOK_MARKER in hook.get("command", "")
+def skill_names():
+    return sorted(
+        name for name in os.listdir(SRC_SKILLS_DIR)
+        if os.path.isdir(os.path.join(SRC_SKILLS_DIR, name))
+    )
+
+
+def build_commands(py_cmd, in_place, script_dir):
+    """Return (status_command, stop_command) for settings.json."""
+    if in_place:
+        script = '"' + script_dir.replace("\\", "/") + '/ccbar.py"'
+    else:
+        script = "~/.claude/ccbar.py"
+    status = " ".join(py_cmd + [script])
+    return status, status + " --stop-hook"
+
+
+def resolve_mode(settings, script_dir, args):
+    """Return True for in-place mode.
+
+    An explicit flag wins; otherwise keep the existing install's mode, so a
+    plain re-run after `git pull` doesn't flip an in-place machine to copy.
+    """
+    if "--copy" in args:
+        return False
+    if "--in-place" in args:
+        return True
+    command = settings.get("statusLine", {}).get("command", "")
+    clone_script = script_dir.replace("\\", "/") + "/ccbar.py"
+    return clone_script.lower() in command.lower()
+
+
+def is_ccbar_stop_hook(command):
+    return "ccbar.py" in command and "--stop-hook" in command
 
 
 def remove_stop_hook(settings):
     stop = settings.get("hooks", {}).get("Stop", [])
     kept = []
     for group in stop:
-        hooks = [h for h in group.get("hooks", []) if not _is_ccbar_stop_hook(h)]
+        hooks = [h for h in group.get("hooks", []) if not is_ccbar_stop_hook(h.get("command", ""))]
         if hooks:
             kept.append({**group, "hooks": hooks})
     changed = kept != stop
@@ -122,7 +158,7 @@ def upsert_stop_hook(settings, command):
     )
 
 
-def install(dry_run=False, no_verify=False, reset_config=False):
+def install(dry_run=False, no_verify=False, reset_config=False, in_place=False):
     print("=== ccBar installer ===\n")
 
     py_cmd, py_display = find_python()
@@ -130,13 +166,26 @@ def install(dry_run=False, no_verify=False, reset_config=False):
         print("ERROR: could not locate a Python 3 interpreter.", file=sys.stderr)
         sys.exit(1)
     print(f"  Python: {py_display}")
+    if in_place:
+        print(f"  Mode: in-place (runs {SRC_SCRIPT})")
+    else:
+        print(f"  Mode: copy (runs {DEST_SCRIPT})")
 
-    status_cmd = {"type": "command", "command": " ".join(py_cmd + ["~/.claude/ccbar.py"])}
-    stop_cmd = " ".join(py_cmd + ["~/.claude/ccbar.py", "--stop-hook"])
+    status_command, stop_cmd = build_commands(py_cmd, in_place, SCRIPT_DIR)
+    status_cmd = {"type": "command", "command": status_command}
 
-    # Always deploy the latest ccbar.py so re-runs pick up updates
     script_existed = os.path.isfile(DEST_SCRIPT)
-    if dry_run:
+    if in_place:
+        if script_existed:
+            if dry_run:
+                print(f"[dry-run] would ask to remove stale copy {DEST_SCRIPT}")
+            else:
+                ans = input(f"  Remove stale copy {DEST_SCRIPT}? [y/N] ").strip().lower()
+                if ans == "y":
+                    os.remove(DEST_SCRIPT)
+                    print(f"  Removed {DEST_SCRIPT}")
+    # Always deploy the latest ccbar.py so re-runs pick up updates
+    elif dry_run:
         verb = "update" if script_existed else "install"
         print(f"[dry-run] would {verb} ccbar.py -> {DEST_SCRIPT}")
     else:
@@ -145,15 +194,16 @@ def install(dry_run=False, no_verify=False, reset_config=False):
         verb = "Updated" if script_existed else "Installed"
         print(f"  {verb} ccbar.py -> {DEST_SCRIPT}")
 
-    skill_existed = os.path.isfile(DEST_SKILL)
-    if dry_run:
-        verb = "update" if skill_existed else "install"
-        print(f"[dry-run] would {verb} session-retro skill -> {DEST_SKILL}")
-    else:
-        os.makedirs(DEST_SKILL_DIR, exist_ok=True)
-        shutil.copy2(SRC_SKILL, DEST_SKILL)
-        verb = "Updated" if skill_existed else "Installed"
-        print(f"  {verb} session-retro skill -> {DEST_SKILL}")
+    for name in skill_names():
+        dest = os.path.join(DEST_SKILLS_DIR, name)
+        skill_existed = os.path.isdir(dest)
+        if dry_run:
+            verb = "update" if skill_existed else "install"
+            print(f"[dry-run] would {verb} {name} skill -> {dest}")
+        else:
+            shutil.copytree(os.path.join(SRC_SKILLS_DIR, name), dest, dirs_exist_ok=True)
+            verb = "Updated" if skill_existed else "Installed"
+            print(f"  {verb} {name} skill -> {dest}")
 
     # Config: write on first install, or when --reset-config is passed.
     # Otherwise preserve it — users edit this file to customize the bar.
@@ -188,7 +238,8 @@ def install(dry_run=False, no_verify=False, reset_config=False):
     # Self-test
     if not no_verify and not dry_run:
         print("\n  Running self-test...")
-        r = subprocess.run(py_cmd + [DEST_SCRIPT, "--selftest"], capture_output=False)
+        script = SRC_SCRIPT if in_place else DEST_SCRIPT
+        r = subprocess.run(py_cmd + [script, "--selftest"], capture_output=False)
         if r.returncode != 0:
             print("  WARNING: self-test failed — check the output above.", file=sys.stderr)
         else:
@@ -223,7 +274,7 @@ def uninstall(dry_run=False):
             print(f"  Restored from {SETTINGS_BAK}")
 
     cache_path = os.path.expanduser("~/.claude/.ccbar-cache.json")
-    for path in [DEST_SCRIPT, DEST_CONFIG, cache_path, DEST_SKILL]:
+    for path in [DEST_SCRIPT, DEST_CONFIG, cache_path]:
         if os.path.isfile(path):
             if dry_run:
                 print(f"[dry-run] would remove {path}")
@@ -233,17 +284,16 @@ def uninstall(dry_run=False):
                     os.remove(path)
                     print(f"  Removed {path}")
 
-    if not dry_run and os.path.isdir(DEST_SKILL_DIR) and not os.listdir(DEST_SKILL_DIR):
-        os.rmdir(DEST_SKILL_DIR)
-
-    if os.path.isdir(STATE_DIR):
-        if dry_run:
-            print(f"[dry-run] would remove {STATE_DIR}")
-        else:
-            ans = input(f"  Remove {STATE_DIR}? [y/N] ").strip().lower()
-            if ans == "y":
-                shutil.rmtree(STATE_DIR)
-                print(f"  Removed {STATE_DIR}")
+    skill_dirs = [os.path.join(DEST_SKILLS_DIR, name) for name in skill_names()]
+    for path in skill_dirs + [STATE_DIR]:
+        if os.path.isdir(path):
+            if dry_run:
+                print(f"[dry-run] would remove {path}")
+            else:
+                ans = input(f"  Remove {path}? [y/N] ").strip().lower()
+                if ans == "y":
+                    shutil.rmtree(path)
+                    print(f"  Removed {path}")
 
     print(f"  Kept {os.path.join(CLAUDE_DIR, 'retros')} (your retro files)")
 
@@ -256,10 +306,15 @@ def main():
     no_verify = "--no-verify" in args
     reset_config = "--reset-config" in args
 
+    if "--in-place" in args and "--copy" in args:
+        print("ERROR: --in-place and --copy are mutually exclusive.", file=sys.stderr)
+        sys.exit(2)
+
     if "--uninstall" in args:
         uninstall(dry_run=dry_run)
     else:
-        install(dry_run=dry_run, no_verify=no_verify, reset_config=reset_config)
+        in_place = resolve_mode(load_settings(), SCRIPT_DIR, args)
+        install(dry_run=dry_run, no_verify=no_verify, reset_config=reset_config, in_place=in_place)
 
 
 if __name__ == "__main__":
