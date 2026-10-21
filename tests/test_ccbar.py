@@ -295,10 +295,136 @@ class GitInfoTests(unittest.TestCase):
 
     def test_parses_insertions_and_deletions_from_shortstat(self):
         shortstat = " 2 files changed, 7 insertions(+), 3 deletions(-)"
-        with mock.patch.object(ccbar, "_run_git", side_effect=["main", shortstat]):
+        with mock.patch.object(ccbar, "_run_git", side_effect=["main", shortstat, ""]):
             info = ccbar.get_git_info({}, "C:/repo")
 
         self.assertEqual((info["insertions"], info["deletions"]), (7, 3))
+
+    def test_status_runs_porcelain_without_optional_locks(self):
+        with mock.patch.object(ccbar, "_run_git", return_value="") as run_git:
+            ccbar.get_git_info({}, "C:/repo")
+
+        self.assertIn(
+            mock.call(["--no-optional-locks", "status", "--porcelain"], 800, "C:/repo"), run_git.call_args_list
+        )
+
+    def test_untracked_only_change_is_dirty_with_zero_counts(self):
+        with mock.patch.object(ccbar, "_run_git", side_effect=["main", "", "?? new.txt"]):
+            info = ccbar.get_git_info({}, "C:/repo")
+
+        self.assertTrue(info["dirty"])
+        self.assertEqual((info["insertions"], info["deletions"]), (0, 0))
+
+    def test_clean_porcelain_is_not_dirty(self):
+        with mock.patch.object(ccbar, "_run_git", side_effect=["main", "", ""]):
+            info = ccbar.get_git_info({}, "C:/repo")
+
+        self.assertFalse(info["dirty"])
+
+
+CLEAN_INFO = {"branch": "main", "insertions": 0, "deletions": 0, "dirty": False}
+DIRTY_INFO = {"branch": "main", "insertions": 5, "deletions": 1, "dirty": True}
+GIT_CFG = {"git": {"cache_ttl_ms": 3000, "timeout_ms": 800}}
+
+
+def _git_payload(cwd="C:/repo"):
+    return {"session_id": "sess-1", "workspace": {"current_dir": cwd}}
+
+
+class GitCacheTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._orig_state_dir = ccbar.STATE_DIR
+        ccbar.STATE_DIR = self._tmp.name
+        self._git_tmp = tempfile.TemporaryDirectory()
+        self.git_dir = self._git_tmp.name
+        self.head_log = os.path.join(self.git_dir, "logs", "HEAD")
+        os.makedirs(os.path.dirname(self.head_log))
+        with open(self.head_log, "w", encoding="utf-8") as f:
+            f.write("")
+        os.utime(self.head_log, (1_700_000_000, 1_700_000_000))
+
+    def tearDown(self):
+        ccbar.STATE_DIR = self._orig_state_dir
+        self._tmp.cleanup()
+        self._git_tmp.cleanup()
+
+    def _call(self, info, now, cwd="C:/repo"):
+        with mock.patch.object(ccbar, "get_git_info", return_value=info) as get_git_info, \
+                mock.patch.object(ccbar, "_run_git", return_value=self.git_dir):
+            result = ccbar.cached_git_info(_git_payload(cwd), GIT_CFG, ccbar.load_state("sess-1"), now=now)
+        return result, get_git_info.called
+
+    def test_hit_within_ttl_skips_git_and_state_write(self):
+        self._call(CLEAN_INFO, 1000.0)
+        path = os.path.join(self._tmp.name, "sess-1.json")
+        os.utime(path, (1_700_000_000, 1_700_000_000))
+
+        _, refreshed = self._call(CLEAN_INFO, 1002.0)
+
+        self.assertFalse(refreshed)
+        self.assertEqual(os.path.getmtime(path), 1_700_000_000)
+
+    def test_miss_after_ttl_refreshes(self):
+        self._call(CLEAN_INFO, 1000.0)
+
+        _, refreshed = self._call(CLEAN_INFO, 1003.5)
+
+        self.assertTrue(refreshed)
+        self.assertEqual(ccbar.load_state("sess-1")["git"]["ts"], 1003.5)
+
+    def test_miss_on_cwd_change_refreshes(self):
+        self._call(CLEAN_INFO, 1000.0)
+
+        _, refreshed = self._call(CLEAN_INFO, 1001.0, cwd="C:/other")
+
+        self.assertTrue(refreshed)
+        self.assertEqual(ccbar.load_state("sess-1")["git"]["cwd"], "C:/other")
+
+    def test_commit_inside_ttl_refreshes_dirty_cache(self):
+        self._call(DIRTY_INFO, 1000.0)
+        os.utime(self.head_log, (1_700_000_100, 1_700_000_100))
+
+        result, refreshed = self._call(CLEAN_INFO, 1001.0)
+
+        self.assertTrue(refreshed)
+        self.assertFalse(result["dirty"])
+
+    def test_dirty_cache_kept_when_head_log_unchanged(self):
+        self._call(DIRTY_INFO, 1000.0)
+
+        result, refreshed = self._call(CLEAN_INFO, 1001.0)
+
+        self.assertFalse(refreshed)
+        self.assertTrue(result["dirty"])
+
+    def test_first_commit_inside_ttl_refreshes_dirty_cache(self):
+        os.remove(self.head_log)
+        self._call(DIRTY_INFO, 1000.0)
+        with open(self.head_log, "w", encoding="utf-8") as f:
+            f.write("")
+
+        _, refreshed = self._call(CLEAN_INFO, 1001.0)
+
+        self.assertTrue(refreshed)
+
+    def test_cache_write_preserves_events(self):
+        ccbar.save_state("sess-1", CROSSED_STATE)
+
+        self._call(CLEAN_INFO, 1000.0)
+
+        state = ccbar.load_state("sess-1")
+        self.assertEqual(state["events"], CROSSED_STATE["events"])
+        self.assertEqual(state["window_size"], CROSSED_STATE["window_size"])
+
+    def test_unsafe_session_id_bypasses_cache(self):
+        data = {**_git_payload(), "session_id": "../evil"}
+        with mock.patch.object(ccbar, "get_git_info", return_value=CLEAN_INFO), \
+                mock.patch.object(ccbar, "_run_git", return_value=self.git_dir):
+            result = ccbar.cached_git_info(data, GIT_CFG, {}, now=1000.0)
+
+        self.assertEqual(result, CLEAN_INFO)
+        self.assertEqual(os.listdir(self._tmp.name), [])
 
 
 class SafeSessionIdTests(unittest.TestCase):
@@ -331,8 +457,7 @@ class RenderTests(unittest.TestCase):
         data = {"workspace": {"current_dir": "C:/repo"}, "model": {"display_name": "X"}}
         cfg = {"no_color": True}
 
-        with mock.patch.object(ccbar, "get_git_info", return_value=git_info):
-            out = ccbar.render(data, cfg)
+        out = ccbar.render(data, cfg, git_info=git_info)
 
         self.assertIn("evil", out)
         self.assertNotIn("\x1b", out)
@@ -340,8 +465,11 @@ class RenderTests(unittest.TestCase):
     def _render_line1(self, cfg, events):
         data = {"workspace": {"current_dir": "C:/repo"}, "model": {"display_name": "X"}}
         git_info = {"branch": "", "insertions": 0, "deletions": 0}
-        with mock.patch.object(ccbar, "get_git_info", return_value=git_info):
-            return ccbar.render(data, {"no_color": True, **cfg}, events=events).splitlines()[0]
+        return ccbar.render(data, {"no_color": True, **cfg}, git_info=git_info, events=events).splitlines()[0]
+
+    def _render_line2(self, cfg, git_info):
+        data = {"workspace": {"current_dir": "C:/repo"}, "model": {"display_name": "X"}}
+        return ccbar.render(data, {"no_color": True, **cfg}, git_info=git_info).splitlines()[1]
 
     def test_shows_handoff_marker_when_fired(self):
         line1 = self._render_line1({}, {"handoff": {"fired": True}})
@@ -357,6 +485,38 @@ class RenderTests(unittest.TestCase):
         line1 = self._render_line1({"segments": {"handoff": False}}, {"handoff": {"fired": True}})
 
         self.assertNotIn("handoff", line1)
+
+    def test_shows_dirty_marker_after_branch(self):
+        line2 = self._render_line2({"icons": {"branch": ""}}, {**CLEAN_INFO, "dirty": True})
+
+        self.assertIn("main*", line2)
+
+    def test_uses_icons_dirty_when_set(self):
+        line2 = self._render_line2({"icons": {"branch": "", "dirty": "!"}}, {**CLEAN_INFO, "dirty": True})
+
+        self.assertIn("main!", line2)
+
+    def test_ascii_fallback_ignores_icons_dirty(self):
+        line2 = self._render_line2({"icons": {"dirty": "!", "ascii_fallback": True}}, {**CLEAN_INFO, "dirty": True})
+
+        self.assertIn("main*", line2)
+
+    def test_hides_dirty_marker_when_segment_off(self):
+        line2 = self._render_line2({"segments": {"git_dirty": False}}, {**CLEAN_INFO, "dirty": True})
+
+        self.assertNotIn("*", line2)
+
+    def test_shows_dirty_marker_without_branch(self):
+        line2 = self._render_line2({}, {**CLEAN_INFO, "branch": "", "dirty": True})
+
+        self.assertTrue(line2.endswith("*"))
+
+    def test_render_without_git_info_shows_folder_only(self):
+        data = {"workspace": {"current_dir": "C:/repo"}, "model": {"display_name": "X"}}
+
+        line2 = ccbar.render(data, {"no_color": True}).splitlines()[1]
+
+        self.assertEqual(line2, "📁 repo")
 
 
 if __name__ == "__main__":

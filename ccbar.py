@@ -54,6 +54,7 @@ DEFAULTS = {
     "git": {
         "dirty_marker": "*",
         "timeout_ms": 800,
+        "cache_ttl_ms": 3000,
     },
     "icons": {
         "branch": "🌿",
@@ -174,8 +175,9 @@ def get_git_info(cfg, cwd):
     timeout_ms = cfg.get("git", {}).get("timeout_ms", 800)
     branch = _run_git(["branch", "--show-current"], timeout_ms, cwd) or ""
     shortstat = _run_git(["diff", "--shortstat", "HEAD"], timeout_ms, cwd) or ""
+    porcelain = _run_git(["--no-optional-locks", "status", "--porcelain"], timeout_ms, cwd) or ""
     ins, dels = _parse_shortstat(shortstat)
-    return {"branch": branch, "insertions": ins, "deletions": dels}
+    return {"branch": branch, "insertions": ins, "deletions": dels, "dirty": bool(porcelain)}
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +197,11 @@ def context_tokens(data):
     return used, size
 
 
-def render(data, cfg, events=None):
+def _workspace_dir(data):
+    return data.get("workspace", {}).get("current_dir", os.getcwd())
+
+
+def render(data, cfg, git_info=None, events=None):
     segs = cfg.get("segments", {})
     colors = cfg.get("colors", {})
     bar_cfg = cfg.get("bar", {})
@@ -263,8 +269,8 @@ def render(data, cfg, events=None):
             line1 += " | " + c(label, colors.get(name))
 
     # ---- build line 2 ----
-    cwd = data.get("workspace", {}).get("current_dir", os.getcwd())
-    git_info = get_git_info(cfg, cwd)
+    cwd = _workspace_dir(data)
+    git_info = git_info or {}
 
     line2_parts = []
 
@@ -272,22 +278,27 @@ def render(data, cfg, events=None):
     branch = _sanitize_label(git_info.get("branch", ""))
     ins = git_info.get("insertions", 0)
     dels = git_info.get("deletions", 0)
-    is_dirty = bool(ins or dels)
+    ascii_fallback = icons.get("ascii_fallback", False)
 
     if folder:
-        ascii_fallback = icons.get("ascii_fallback", False)
         folder_icon = icons.get("folder", "📁")
         folder_prefix = "" if (ascii_fallback or not folder_icon) else folder_icon + " "
         line2_parts.append(folder_prefix + folder)
 
+    branch_part = ""
     if segs.get("git_branch", True) and branch:
-        ascii_fallback = icons.get("ascii_fallback", False)
         branch_icon = icons.get("branch", "🌿")
-        if ascii_fallback or not branch_icon:
-            branch_icon = ""
-        else:
-            branch_icon = branch_icon + " "
-        line2_parts.append(c(branch_icon + branch, colors.get("branch", "cyan")))
+        branch_prefix = "" if (ascii_fallback or not branch_icon) else branch_icon + " "
+        branch_part = c(branch_prefix + branch, colors.get("branch", "cyan"))
+
+    if segs.get("git_dirty", True) and git_info.get("dirty"):
+        marker = icons.get("dirty")
+        if ascii_fallback or not marker:
+            marker = git_cfg.get("dirty_marker", "*")
+        branch_part += c(marker, colors.get("dirty", "yellow"))
+
+    if branch_part:
+        line2_parts.append(branch_part)
 
     if segs.get("git_changes", True) and (ins or dels):
         parts = []
@@ -427,6 +438,47 @@ def update_event_state(data, cfg):
     return update_state(session_id, record_crossings)
 
 
+def _head_log_mtime(git_dir):
+    if not git_dir:
+        return None
+    try:
+        return os.path.getmtime(os.path.join(git_dir, "logs", "HEAD"))
+    except OSError:
+        # No commits yet: the reflog doesn't exist until the first one
+        return None
+
+
+def cached_git_info(data, cfg, state, now=None):
+    now = now or time.time()
+    cwd = _workspace_dir(data)
+    session_id = _safe_session_id(data.get("session_id"))
+    if not session_id:
+        return get_git_info(cfg, cwd)
+
+    git_cfg = cfg.get("git", {})
+    cached = state.get("git")
+    fresh = (
+        cached is not None
+        and cached.get("cwd") == cwd
+        and now - cached.get("ts", 0) < git_cfg.get("cache_ttl_ms", 3000) / 1000
+    )
+    if fresh and cached.get("dirty"):
+        # A commit clears the tree before the TTL runs out; the HEAD reflog mtime catches it without git
+        fresh = _head_log_mtime(cached.get("git_dir")) == cached.get("head_log_mtime")
+    if fresh:
+        return cached
+
+    info = get_git_info(cfg, cwd)
+    git_dir = _run_git(["rev-parse", "--absolute-git-dir"], git_cfg.get("timeout_ms", 800), cwd)
+    entry = {**info, "ts": now, "cwd": cwd, "git_dir": git_dir, "head_log_mtime": _head_log_mtime(git_dir)}
+
+    def store(state):
+        state["git"] = entry
+
+    update_state(session_id, store)
+    return info
+
+
 def run_stop_hook():
     payload = json.loads(sys.stdin.read())
     session_id = _safe_session_id(payload.get("session_id"))
@@ -491,7 +543,7 @@ def selftest():
     cfg = load_config()
     ok = True
     for label, mock in [("200k window", MOCK_200K), ("1M window", MOCK_1M)]:
-        out = render(mock, cfg)
+        out = render(mock, cfg, git_info=get_git_info(cfg, _workspace_dir(mock)))
         if not out.strip():
             print(f"FAIL: empty render for {label}", file=sys.stderr)
             ok = False
@@ -526,7 +578,8 @@ def main():
         data = json.loads(sys.stdin.read())
         cfg = load_config()
         state = update_event_state(data, cfg)
-        print(render(data, cfg, events=state.get("events", {})))
+        git_info = cached_git_info(data, cfg, state)
+        print(render(data, cfg, git_info=git_info, events=state.get("events", {})))
     except Exception:
         print("\n")
         sys.exit(0)
