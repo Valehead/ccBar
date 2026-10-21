@@ -35,12 +35,23 @@ The installer is safe to re-run after any update — just `git pull` and run it 
 What it does each time:
 
 1. Detects the correct Python invocation (prefers the Windows `py` launcher so a missing `python` on PATH never silently breaks the bar).
-2. Always copies the latest `ccbar.py` to `~/.claude/ccbar.py` (picks up script changes).
-3. Copies `config.example.json` to `~/.claude/ccbar.config.json` on first install only — your config is preserved on re-runs so customizations are never lost.
-4. Always updates the `statusLine` key in `~/.claude/settings.json`, preserving all other keys and backing the file up to `settings.json.bak` first (picks up command or format changes).
-5. Runs a self-test to confirm the renderer works.
+2. Always copies the latest `ccbar.py` to `~/.claude/ccbar.py` (picks up script changes), unless installed in place (see below).
+3. Copies every skill under `skills/` into `~/.claude/skills/`.
+4. Copies `config.example.json` to `~/.claude/ccbar.config.json` on first install only — your config is preserved on re-runs so customizations are never lost.
+5. Always updates the `statusLine` key in `~/.claude/settings.json`, preserving all other keys and backing the file up to `settings.json.bak` first (picks up command or format changes).
+6. Runs a self-test to confirm the renderer works.
 
 Restart Claude Code after installing or updating.
+
+### In-place install
+
+If your machine blocks scripts under `~/.claude`, use `--in-place`:
+
+```sh
+python install.py --in-place
+```
+
+The status line and Stop hook then run `ccbar.py` straight from the clone, so keep the clone where it is. Config and state still live in `~/.claude`. The mode is sticky: a later plain `python install.py` stays in place. Pass `--copy` to switch back. If an old `~/.claude/ccbar.py` is left over, the installer offers to remove it.
 
 ### Updating
 
@@ -53,6 +64,8 @@ python install.py
 
 | Flag | Effect |
 |------|--------|
+| `--in-place` | Run `ccbar.py` from the clone instead of copying it to `~/.claude` |
+| `--copy` | Copy `ccbar.py` to `~/.claude` (the default; switches back from `--in-place`) |
 | `--dry-run` | Print what would change; write nothing |
 | `--no-verify` | Skip self-test |
 | `--reset-config` | Overwrite your config with the latest example (backs up existing first) |
