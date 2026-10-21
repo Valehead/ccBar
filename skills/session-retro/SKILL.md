@@ -1,6 +1,6 @@
 ---
 name: session-retro
-version: 1.0.0
+version: 1.1.0
 description: |
   Mid-session retrospective. Reviews the current session for what went wrong,
   what could have been done better, and what to improve next time. Writes the
@@ -45,10 +45,10 @@ Write it to `~/.claude/retros/YYYY-MM-DD-<cwd leaf>-<first 8 chars of session_id
 For each lesson likely to recur, pick the single most appropriate destination:
 
 - **Auto-memory `feedback` entry:** how the user wants Claude to work, personal and cross-session, not already in a CLAUDE.md. Follow the memory file format from your system prompt (one fact per file plus a MEMORY.md pointer).
-- **Project `CLAUDE.md`** (in the repo at `cwd`): a convention or gotcha specific to this repo that any session there should follow.
+- **Workspace or project `CLAUDE.md`:** the nearest existing `CLAUDE.md` walking up from `cwd`, preferring one above the git repo root when it exists. Never propose creating a new `CLAUDE.md` inside a git repo. Before proposing an edit to one inside a repo, check `~/.claude/CLAUDE.md` and any ancestor `CLAUDE.md` for a rule against repo-level `CLAUDE.md` files; if there is one, use the next destination up.
 - **Global `~/.claude/CLAUDE.md`:** a rule about how the user works across all projects.
 
-Before proposing, read the target and check for an existing entry that covers it. Propose updating that entry rather than adding a duplicate. One-off mistakes don't become rules. Expect 0 to 2 proposals.
+Before proposing, read the target and check for an existing entry that covers it. Propose updating that entry rather than adding a duplicate. If the lesson already exists as a rule in a destination, say the session didn't follow it instead of proposing a duplicate. One-off mistakes don't become rules. Expect 0 to 2 proposals.
 
 ## 5. Output in chat
 

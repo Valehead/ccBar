@@ -4,9 +4,23 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import ccbar
 
 RETRO_CFG = {"enabled": True, "threshold_tokens": 400000, "threshold_pct": 70}
-CFG = {"retro": RETRO_CFG}
+HANDOFF_CFG = {
+    "enabled": True,
+    "threshold_tokens": 600000,
+    "threshold_pct": 85,
+    "plans_dir": "~/.claude/plans",
+    "prompt_template": "Read and execute this plan at: {path}",
+}
+CFG = {"retro": RETRO_CFG, "handoff": HANDOFF_CFG}
 CROSSED_STATE = {"window_size": 1000000, "events": {"retro": {"crossed": True, "fired": False, "tokens": 410000}}}
 FIRED_STATE = {"window_size": 1000000, "events": {"retro": {"crossed": True, "fired": True, "tokens": 410000}}}
+BOTH_CROSSED_STATE = {
+    "window_size": 1000000,
+    "events": {
+        "retro": {"crossed": True, "fired": False, "tokens": 610000},
+        "handoff": {"crossed": True, "fired": False, "tokens": 610000},
+    },
+}
 PAYLOAD = {
     "session_id": "abc12345",
     "transcript_path": "C:/t/abc12345.jsonl",
@@ -79,12 +93,42 @@ class StopHookOutputTests(unittest.TestCase):
         self.assertIsNone(ccbar.stop_hook_output(PAYLOAD, CROSSED_STATE, cfg))
 
     def test_returns_additional_context_naming_skill_and_transcript(self):
-        out = ccbar.stop_hook_output(PAYLOAD, CROSSED_STATE, CFG)
+        _, out = ccbar.stop_hook_output(PAYLOAD, CROSSED_STATE, CFG)
 
         hso = out["hookSpecificOutput"]
         self.assertEqual(hso["hookEventName"], "Stop")
         self.assertIn("session-retro", hso["additionalContext"])
         self.assertIn(PAYLOAD["transcript_path"], hso["additionalContext"])
+
+    def test_returns_retro_when_both_crossed_and_unfired(self):
+        name, _ = ccbar.stop_hook_output(PAYLOAD, BOTH_CROSSED_STATE, CFG)
+
+        self.assertEqual(name, "retro")
+
+    def test_returns_handoff_when_retro_already_fired(self):
+        state = {"events": {**BOTH_CROSSED_STATE["events"], "retro": {"crossed": True, "fired": True}}}
+
+        name, _ = ccbar.stop_hook_output(PAYLOAD, state, CFG)
+
+        self.assertEqual(name, "handoff")
+
+    def test_returns_none_when_handoff_disabled_even_if_crossed(self):
+        state = {"events": {"handoff": {"crossed": True, "fired": False, "tokens": 610000}}}
+        cfg = {**CFG, "handoff": {**HANDOFF_CFG, "enabled": False}}
+
+        self.assertIsNone(ccbar.stop_hook_output(PAYLOAD, state, cfg))
+
+    def test_handoff_context_has_skill_absolute_plans_dir_and_template(self):
+        state = {"events": {"handoff": {"crossed": True, "fired": False, "tokens": 610000}}}
+
+        _, out = ccbar.stop_hook_output(PAYLOAD, state, CFG)
+
+        context = out["hookSpecificOutput"]["additionalContext"]
+        plans_dir = os.path.abspath(os.path.expanduser("~/.claude/plans"))
+        self.assertIn("session-handoff", context)
+        self.assertIn(f"plans_dir={plans_dir} ", context)
+        self.assertNotIn("~", context)
+        self.assertIn('prompt_template="Read and execute this plan at: {path}"', context)
 
 
 class StateIoTests(unittest.TestCase):
@@ -159,6 +203,24 @@ class StateIoTests(unittest.TestCase):
         second = ccbar.update_event_state(_status_payload(600000), CFG)
         self.assertEqual(second["events"]["retro"]["tokens"], 450000)
 
+    def test_update_event_state_records_handoff_while_retro_disabled(self):
+        cfg = {**CFG, "retro": {**RETRO_CFG, "enabled": False}}
+
+        state = ccbar.update_event_state(_status_payload(650000), cfg)
+
+        self.assertEqual(list(state["events"]), ["handoff"])
+        self.assertTrue(state["events"]["handoff"]["crossed"])
+
+    def test_update_event_state_records_both_then_skips_unchanged_write(self):
+        first = ccbar.update_event_state(_status_payload(650000), CFG)
+        path = os.path.join(self._tmp.name, "sess-1.json")
+        os.utime(path, (1_700_000_000, 1_700_000_000))
+
+        ccbar.update_event_state(_status_payload(650000), CFG)
+
+        self.assertEqual(sorted(first["events"]), ["handoff", "retro"])
+        self.assertEqual(os.path.getmtime(path), 1_700_000_000)
+
     def test_update_event_state_ignores_unsafe_session_id(self):
         data = {**_status_payload(450000), "session_id": "../evil"}
 
@@ -195,6 +257,17 @@ class RunStopHookTests(unittest.TestCase):
         self.assertIn("session-retro", first)
         self.assertEqual(second, "")
         self.assertTrue(ccbar.load_state(PAYLOAD["session_id"])["events"]["retro"]["fired"])
+
+    def test_fires_retro_then_handoff_then_nothing(self):
+        ccbar.save_state(PAYLOAD["session_id"], BOTH_CROSSED_STATE)
+
+        first = self._run(PAYLOAD)
+        second = self._run(PAYLOAD)
+        third = self._run(PAYLOAD)
+
+        self.assertIn("session-retro", first)
+        self.assertIn("session-handoff", second)
+        self.assertEqual(third, "")
 
     def test_stop_hook_active_fires_nothing(self):
         ccbar.save_state(PAYLOAD["session_id"], CROSSED_STATE)
@@ -263,6 +336,27 @@ class RenderTests(unittest.TestCase):
 
         self.assertIn("evil", out)
         self.assertNotIn("\x1b", out)
+
+    def _render_line1(self, cfg, events):
+        data = {"workspace": {"current_dir": "C:/repo"}, "model": {"display_name": "X"}}
+        git_info = {"branch": "", "insertions": 0, "deletions": 0}
+        with mock.patch.object(ccbar, "get_git_info", return_value=git_info):
+            return ccbar.render(data, {"no_color": True, **cfg}, events=events).splitlines()[0]
+
+    def test_shows_handoff_marker_when_fired(self):
+        line1 = self._render_line1({}, {"handoff": {"fired": True}})
+
+        self.assertIn("handoff ✓", line1)
+
+    def test_shows_handoff_done_under_ascii_fallback(self):
+        line1 = self._render_line1({"icons": {"ascii_fallback": True}}, {"handoff": {"fired": True}})
+
+        self.assertIn("handoff done", line1)
+
+    def test_hides_handoff_marker_when_segment_off(self):
+        line1 = self._render_line1({"segments": {"handoff": False}}, {"handoff": {"fired": True}})
+
+        self.assertNotIn("handoff", line1)
 
 
 if __name__ == "__main__":

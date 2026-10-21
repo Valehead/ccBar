@@ -10,7 +10,8 @@
     "git_branch": true,
     "git_dirty": true,
     "git_changes": true,
-    "retro": true
+    "retro": true,
+    "handoff": true
   },
 
   "bar": {
@@ -36,7 +37,8 @@
     "dirty": "yellow",
     "insertions": "green",
     "deletions": "red",
-    "retro": "magenta"
+    "retro": "magenta",
+    "handoff": "blue"
   },
 
   "no_color": false,
@@ -52,6 +54,15 @@
     "enabled": true,
     "threshold_tokens": 400000,
     "threshold_pct": 70
+  },
+
+  "handoff": {
+    "_comment": "Fires once per session when context reaches threshold_tokens OR threshold_pct, whichever comes first. The Stop hook then tells Claude to run the session-handoff skill.",
+    "enabled": true,
+    "threshold_tokens": 600000,
+    "threshold_pct": 85,
+    "plans_dir": "~/.claude/plans",
+    "prompt_template": "Read and execute this plan at: {path}"
   },
 
   "git": {
