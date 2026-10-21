@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """ccBar - Claude Code status line. Reads JSON from stdin, prints two ANSI lines."""
 
+import copy
 import io
 import json
 import os
@@ -298,16 +299,17 @@ def render(data, cfg, retro_fired=False):
 STATE_DIR = os.path.expanduser("~/.claude/ccbar-state")
 STATE_MAX_AGE_DAYS = 7
 RETRO_SKILL = "session-retro"
+EVENTS = ("retro",)
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 
-def threshold_crossed(tokens, window_size, retro_cfg):
-    if not retro_cfg.get("enabled", True):
+def threshold_crossed(tokens, window_size, event_cfg):
+    if not event_cfg.get("enabled", True):
         return False
-    if tokens >= retro_cfg.get("threshold_tokens", 400000):
+    if tokens >= event_cfg.get("threshold_tokens", 400000):
         return True
     pct = (tokens / window_size * 100) if window_size else 0
-    return pct >= retro_cfg.get("threshold_pct", 70)
+    return pct >= event_cfg.get("threshold_pct", 70)
 
 
 def stop_hook_output(payload, state, cfg):
@@ -315,10 +317,11 @@ def stop_hook_output(payload, state, cfg):
         return None
     if payload.get("stop_hook_active"):
         return None
-    if not state.get("crossed") or state.get("retro_fired"):
+    retro = state.get("events", {}).get("retro", {})
+    if not retro.get("crossed") or retro.get("fired"):
         return None
     context = (
-        f"This session's context passed {state.get('tokens', 0):,} tokens. "
+        f"This session's context passed {retro.get('tokens', 0):,} tokens. "
         f"Before doing anything else, invoke the {RETRO_SKILL} skill with the Skill tool, "
         f"passing args: session_id={payload.get('session_id', '')} "
         f"transcript_path={payload.get('transcript_path', '')} cwd={payload.get('cwd', '')}"
@@ -336,12 +339,24 @@ def _safe_session_id(value):
     return None
 
 
+def _from_legacy(state):
+    retro = {
+        "crossed": state["crossed"],
+        "fired": state.get("retro_fired", False),
+        "tokens": state.get("tokens", 0),
+    }
+    return {"window_size": state.get("window_size"), "events": {"retro": retro}}
+
+
 def load_state(session_id):
     path = _state_path(session_id)
     if not os.path.isfile(path):
         return {}
     with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        state = json.load(f)
+    if "events" not in state and "crossed" in state:
+        return _from_legacy(state)
+    return state
 
 
 def save_state(session_id, state):
@@ -354,6 +369,15 @@ def save_state(session_id, state):
     os.replace(tmp, path)
 
 
+def update_state(session_id, change):
+    loaded = load_state(session_id)
+    state = copy.deepcopy(loaded)
+    change(state)
+    if state != loaded:
+        save_state(session_id, state)
+    return state
+
+
 def prune_state(now=None):
     cutoff = (now or time.time()) - STATE_MAX_AGE_DAYS * 86400
     for name in os.listdir(STATE_DIR):
@@ -362,18 +386,21 @@ def prune_state(now=None):
             os.remove(path)
 
 
-def update_retro_state(data, cfg):
+def update_event_state(data, cfg):
     session_id = _safe_session_id(data.get("session_id"))
     if not session_id:
         return {}
-    state = load_state(session_id)
-    if state.get("crossed"):
-        return state
     tokens, size = context_tokens(data)
-    if threshold_crossed(tokens, size, cfg.get("retro", {})):
-        state = {"crossed": True, "retro_fired": False, "tokens": tokens, "window_size": size}
-        save_state(session_id, state)
-    return state
+
+    def record_crossings(state):
+        for name in EVENTS:
+            if state.get("events", {}).get(name, {}).get("crossed"):
+                continue
+            if threshold_crossed(tokens, size, cfg.get(name, {})):
+                state.setdefault("events", {})[name] = {"crossed": True, "fired": False, "tokens": tokens}
+                state["window_size"] = size
+
+    return update_state(session_id, record_crossings)
 
 
 def run_stop_hook():
@@ -386,9 +413,12 @@ def run_stop_hook():
     out = stop_hook_output(payload, state, cfg)
     if out is None:
         return
+
+    def mark_fired(state):
+        state["events"]["retro"]["fired"] = True
+
     # Saved before printing so a crash after the print can't fire the retro twice
-    state["retro_fired"] = True
-    save_state(session_id, state)
+    update_state(session_id, mark_fired)
     prune_state()
     print(json.dumps(out))
 
@@ -470,8 +500,9 @@ def main():
     try:
         data = json.loads(sys.stdin.read())
         cfg = load_config()
-        state = update_retro_state(data, cfg)
-        print(render(data, cfg, retro_fired=state.get("retro_fired", False)))
+        state = update_event_state(data, cfg)
+        retro_fired = state.get("events", {}).get("retro", {}).get("fired", False)
+        print(render(data, cfg, retro_fired=retro_fired))
     except Exception:
         print("\n")
         sys.exit(0)
