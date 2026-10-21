@@ -8,7 +8,7 @@ A two-line ANSI status bar for [Claude Code](https://claude.ai/code), showing co
 
 ## What it shows
 
-**Line 1** — Model name (bold) + color-coded context bar + percentage and token counts + optional cost estimate + `retro ✓` once the session retro has fired.
+**Line 1** — Model name (bold) + color-coded context bar + percentage and token counts + optional cost estimate + `retro ✓` once the session retro has fired + `handoff ✓` once the session handoff has fired.
 
 **Line 2** — Folder name + git branch + `+N/-N` line counts covering both staged and unstaged changes.
 
@@ -96,7 +96,8 @@ Copy `config.example.json` to `~/.claude/ccbar.config.json` (the installer does 
   "git_branch": true,
   "git_dirty": true,
   "git_changes": true,
-  "retro": true
+  "retro": true,
+  "handoff": true
 }
 ```
 
@@ -127,7 +128,8 @@ Valid values: `reset`, `bold`, `black`, `red`, `green`, `yellow`, `blue`, `magen
   "branch": "cyan",
   "dirty": "yellow",
   "insertions": "green",
-  "deletions": "red"
+  "deletions": "red",
+  "handoff": "blue"
 }
 ```
 
@@ -177,7 +179,7 @@ Once per session, when context reaches `threshold_tokens` or `threshold_pct` of 
 
 **How.** The status line writes `~/.claude/ccbar-state/<session_id>.json` at the crossing. The Stop hook (`ccbar.py --stop-hook`, registered by the installer) reads it and injects the instruction once. State is per session, so concurrent sessions don't interfere. State files older than 7 days are pruned.
 
-**Output.** A retro file in `~/.claude/retros/*.md`, plus numbered memory/CLAUDE.md proposals that are only applied on your approval.
+**Output.** A retro file in `~/.claude/retros/*.md`, plus numbered memory/CLAUDE.md proposals that are only applied on your approval. Lessons target the nearest existing CLAUDE.md; the retro never proposes creating a new one inside a git repo.
 
 **Manual run.** `/session-retro` at any time.
 
@@ -190,6 +192,30 @@ Once the retro has fired, line 1 of the bar shows a `retro ✓` marker:
   "enabled": true,
   "threshold_tokens": 400000,
   "threshold_pct": 70
+}
+```
+
+---
+
+## Session handoff
+
+Once per session, when context reaches the handoff's `threshold_tokens` or `threshold_pct` (whichever comes first), the next response end triggers the `session-handoff` skill. Claude writes a self-contained plan so a fresh session can pick up the work. If the retro and the handoff cross together, the retro fires first and the handoff at the next response end.
+
+**How.** Same mechanism as the retro: the status line records the crossing in the session's state file and the Stop hook injects the instruction once.
+
+**Output.** A plan in `plans_dir` named after the work, plus one line in chat built from `prompt_template` with `{path}` replaced by the plan's absolute path, ready to paste into a new session.
+
+**Manual run.** `/session-handoff` at any time.
+
+Once the handoff has fired, line 1 of the bar shows a `handoff ✓` marker.
+
+```json
+"handoff": {
+  "enabled": true,
+  "threshold_tokens": 600000,
+  "threshold_pct": 85,
+  "plans_dir": "~/.claude/plans",
+  "prompt_template": "Read and execute this plan at: {path}"
 }
 ```
 

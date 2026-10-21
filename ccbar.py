@@ -24,6 +24,7 @@ DEFAULTS = {
         "git_dirty": True,
         "git_changes": True,
         "retro": True,
+        "handoff": True,
     },
     "bar": {
         "width": 20,
@@ -42,6 +43,7 @@ DEFAULTS = {
         "insertions": "green",
         "deletions": "red",
         "retro": "magenta",
+        "handoff": "blue",
     },
     "no_color": False,
     "cost": {
@@ -63,6 +65,13 @@ DEFAULTS = {
         "enabled": True,
         "threshold_tokens": 400000,
         "threshold_pct": 70,
+    },
+    "handoff": {
+        "enabled": True,
+        "threshold_tokens": 600000,
+        "threshold_pct": 85,
+        "plans_dir": "~/.claude/plans",
+        "prompt_template": "Read and execute this plan at: {path}",
     },
 }
 
@@ -186,7 +195,7 @@ def context_tokens(data):
     return used, size
 
 
-def render(data, cfg, retro_fired=False):
+def render(data, cfg, events=None):
     segs = cfg.get("segments", {})
     colors = cfg.get("colors", {})
     bar_cfg = cfg.get("bar", {})
@@ -248,9 +257,10 @@ def render(data, cfg, retro_fired=False):
         cost_str = f"${total_cost:.{dec}f}"
         line1 += " | " + c(cost_str, colors.get("cost", "cyan"))
 
-    if segs.get("retro", True) and retro_fired:
-        label = "retro done" if icons.get("ascii_fallback", False) else "retro ✓"
-        line1 += " | " + c(label, colors.get("retro", "magenta"))
+    for name in EVENTS:
+        if segs.get(name, True) and (events or {}).get(name, {}).get("fired"):
+            label = f"{name} done" if icons.get("ascii_fallback", False) else f"{name} ✓"
+            line1 += " | " + c(label, colors.get(name))
 
     # ---- build line 2 ----
     cwd = data.get("workspace", {}).get("current_dir", os.getcwd())
@@ -293,13 +303,13 @@ def render(data, cfg, retro_fired=False):
 
 
 # ---------------------------------------------------------------------------
-# Retro
+# Session events
 # ---------------------------------------------------------------------------
 
 STATE_DIR = os.path.expanduser("~/.claude/ccbar-state")
 STATE_MAX_AGE_DAYS = 7
-RETRO_SKILL = "session-retro"
-EVENTS = ("retro",)
+EVENT_SKILLS = {"retro": "session-retro", "handoff": "session-handoff"}
+EVENTS = ("retro", "handoff")
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 
@@ -312,21 +322,35 @@ def threshold_crossed(tokens, window_size, event_cfg):
     return pct >= event_cfg.get("threshold_pct", 70)
 
 
-def stop_hook_output(payload, state, cfg):
-    if not cfg.get("retro", {}).get("enabled", True):
-        return None
-    if payload.get("stop_hook_active"):
-        return None
-    retro = state.get("events", {}).get("retro", {})
-    if not retro.get("crossed") or retro.get("fired"):
-        return None
+def _event_context(name, event, payload, cfg):
     context = (
-        f"This session's context passed {retro.get('tokens', 0):,} tokens. "
-        f"Before doing anything else, invoke the {RETRO_SKILL} skill with the Skill tool, "
+        f"This session's context passed {event.get('tokens', 0):,} tokens. "
+        f"Before doing anything else, invoke the {EVENT_SKILLS[name]} skill with the Skill tool, "
         f"passing args: session_id={payload.get('session_id', '')} "
         f"transcript_path={payload.get('transcript_path', '')} cwd={payload.get('cwd', '')}"
     )
-    return {"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": context}}
+    if name == "handoff":
+        handoff_cfg = cfg.get("handoff", {})
+        plans_dir = os.path.abspath(os.path.expanduser(handoff_cfg.get("plans_dir", "~/.claude/plans")))
+        template = handoff_cfg.get("prompt_template", "Read and execute this plan at: {path}")
+        context += f' plans_dir={plans_dir} prompt_template="{template}"'
+    return context
+
+
+def stop_hook_output(payload, state, cfg):
+    if payload.get("stop_hook_active"):
+        return None
+    events = state.get("events", {})
+
+    def due(name):
+        event = events.get(name, {})
+        return cfg.get(name, {}).get("enabled", True) and event.get("crossed") and not event.get("fired")
+
+    name = next((n for n in EVENTS if due(n)), None)
+    if name is None:
+        return None
+    context = _event_context(name, events[name], payload, cfg)
+    return name, {"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": context}}
 
 
 def _state_path(session_id):
@@ -410,14 +434,15 @@ def run_stop_hook():
         return
     cfg = load_config()
     state = load_state(session_id)
-    out = stop_hook_output(payload, state, cfg)
-    if out is None:
+    result = stop_hook_output(payload, state, cfg)
+    if result is None:
         return
+    name, out = result
 
     def mark_fired(state):
-        state["events"]["retro"]["fired"] = True
+        state["events"][name]["fired"] = True
 
-    # Saved before printing so a crash after the print can't fire the retro twice
+    # Saved before printing so a crash after the print can't fire the event twice
     update_state(session_id, mark_fired)
     prune_state()
     print(json.dumps(out))
@@ -501,8 +526,7 @@ def main():
         data = json.loads(sys.stdin.read())
         cfg = load_config()
         state = update_event_state(data, cfg)
-        retro_fired = state.get("events", {}).get("retro", {}).get("fired", False)
-        print(render(data, cfg, retro_fired=retro_fired))
+        print(render(data, cfg, events=state.get("events", {})))
     except Exception:
         print("\n")
         sys.exit(0)
