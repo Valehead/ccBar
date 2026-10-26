@@ -38,7 +38,7 @@ What it does each time:
 2. Always copies the latest `ccbar.py` to `~/.claude/ccbar.py` (picks up script changes), unless installed in place (see below).
 3. Copies every skill under `skills/` into `~/.claude/skills/`.
 4. Copies `config.example.json` to `~/.claude/ccbar.config.json` on first install only — your config is preserved on re-runs so customizations are never lost.
-5. Always updates the `statusLine` key in `~/.claude/settings.json`, preserving all other keys and backing the file up to `settings.json.bak` first (picks up command or format changes).
+5. Always updates the `statusLine` key in `~/.claude/settings.json`, preserving all other keys and backing the file up to `settings.json.bak` first (picks up command or format changes). It sets `refreshInterval` to 30 seconds so the rate limit reset countdowns tick between events.
 6. Runs a self-test to confirm the renderer works.
 
 Restart Claude Code after installing or updating.
@@ -97,7 +97,11 @@ Copy `config.example.json` to `~/.claude/ccbar.config.json` (the installer does 
   "git_dirty": true,
   "git_changes": true,
   "retro": true,
-  "handoff": true
+  "handoff": true,
+  "effort": true,
+  "worktree": true,
+  "rate_limits": true,
+  "session_name": true
 }
 ```
 
@@ -129,7 +133,10 @@ Valid values: `reset`, `bold`, `black`, `red`, `green`, `yellow`, `blue`, `magen
   "dirty": "yellow",
   "insertions": "green",
   "deletions": "red",
-  "handoff": "blue"
+  "retro": "magenta",
+  "handoff": "blue",
+  "worktree": "cyan",
+  "session_name": "white"
 }
 ```
 
@@ -167,6 +174,7 @@ The cost figure is an **estimate** taken from Claude Code's own tracking. It is 
   "branch": "🌿",
   "folder": "📁",
   "dirty": null,
+  "worktree": "⎇",
   "ascii_fallback": false
 }
 ```
@@ -174,6 +182,18 @@ The cost figure is an **estimate** taken from Claude Code's own tracking. It is 
 Set `"ascii_fallback": true` to suppress any glyph icons and use plain labels only.
 
 `dirty`: glyph used instead of `git.dirty_marker` when set; ignored under `ascii_fallback`.
+
+`worktree`: glyph before the worktree name on line 2; an empty string or `ascii_fallback` shows `wt ` instead.
+
+### Rate limits
+
+```json
+"rate_limits": {
+  "show_reset": true
+}
+```
+
+Line 2 shows plan usage for the 5-hour and 7-day windows, colored by `bar.thresholds`, e.g. `5h 23% (2h10m)  7d 41%`. `show_reset` adds the time left until each window resets. Claude Code only sends rate limits for Pro/Max plans, after the first response in a session. Toggle with `segments.rate_limits`.
 
 ---
 

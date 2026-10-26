@@ -323,6 +323,7 @@ class GitInfoTests(unittest.TestCase):
 
 
 CLEAN_INFO = {"branch": "main", "insertions": 0, "deletions": 0, "dirty": False}
+NOW = 1_700_000_000
 DIRTY_INFO = {"branch": "main", "insertions": 5, "deletions": 1, "dirty": True}
 GIT_CFG = {"git": {"cache_ttl_ms": 3000, "timeout_ms": 800}}
 
@@ -517,6 +518,135 @@ class RenderTests(unittest.TestCase):
         line2 = ccbar.render(data, {"no_color": True}).splitlines()[1]
 
         self.assertEqual(line2, "📁 repo")
+
+    def _render_with(self, extra, cfg=None, git_info=None, now=NOW):
+        data = {"workspace": {"current_dir": "C:/repo"}, "model": {"display_name": "Opus 4.8"}, **extra}
+        return ccbar.render(data, {"no_color": True, **(cfg or {})}, git_info=git_info, now=now).splitlines()
+
+    def test_effort_shown_inside_model_bracket(self):
+        line1 = self._render_with({"effort": {"level": "high"}})[0]
+
+        self.assertTrue(line1.startswith("[Opus 4.8 · high]"))
+
+    def test_absent_effort_leaves_model_label_unchanged(self):
+        line1 = self._render_with({})[0]
+
+        self.assertTrue(line1.startswith("[Opus 4.8]"))
+
+    def test_effort_hidden_when_segment_off(self):
+        line1 = self._render_with({"effort": {"level": "high"}}, {"segments": {"effort": False}})[0]
+
+        self.assertTrue(line1.startswith("[Opus 4.8]"))
+
+    def test_worktree_name_wins_over_git_worktree(self):
+        extra = {"worktree": {"name": "wt-a"}, "workspace": {"current_dir": "C:/repo", "git_worktree": "wt-b"}}
+
+        line2 = self._render_with(extra, git_info=CLEAN_INFO)[1]
+
+        self.assertTrue(line2.endswith("⎇ wt-a"))
+
+    def test_worktree_falls_back_to_git_worktree(self):
+        extra = {"workspace": {"current_dir": "C:/repo", "git_worktree": "wt-b"}}
+
+        line2 = self._render_with(extra, git_info=CLEAN_INFO)[1]
+
+        self.assertTrue(line2.endswith("⎇ wt-b"))
+
+    def test_worktree_ascii_fallback_prefix(self):
+        line2 = self._render_with({"worktree": {"name": "wt-a"}}, {"icons": {"ascii_fallback": True}})[1]
+
+        self.assertTrue(line2.endswith("wt wt-a"))
+
+    def test_rate_limits_both_windows_with_countdown_on_5h(self):
+        limits = {"five_hour": {"used_percentage": 23, "resets_at": NOW + 7800}, "seven_day": {"used_percentage": 41}}
+
+        line2 = self._render_with({"rate_limits": limits})[1]
+
+        self.assertEqual(line2, "📁 repo | 5h 23% (2h10m)  7d 41%")
+
+    def test_rate_limits_without_seven_day_renders_5h_only(self):
+        line2 = self._render_with({"rate_limits": {"five_hour": {"used_percentage": 23}}})[1]
+
+        self.assertEqual(line2, "📁 repo | 5h 23%")
+
+    def test_rate_limits_past_reset_drops_countdown(self):
+        limits = {"five_hour": {"used_percentage": 23, "resets_at": NOW - 1}}
+
+        line2 = self._render_with({"rate_limits": limits})[1]
+
+        self.assertEqual(line2, "📁 repo | 5h 23%")
+
+    def test_rate_limits_without_now_drops_countdown(self):
+        limits = {"five_hour": {"used_percentage": 23, "resets_at": NOW + 7800}}
+
+        line2 = self._render_with({"rate_limits": limits}, now=None)[1]
+
+        self.assertEqual(line2, "📁 repo | 5h 23%")
+
+    def test_rate_limits_non_numeric_percentage_skips_window(self):
+        limits = {"five_hour": {"used_percentage": "23"}, "seven_day": {"used_percentage": 41}}
+
+        line2 = self._render_with({"rate_limits": limits})[1]
+
+        self.assertEqual(line2, "📁 repo | 7d 41%")
+
+    def test_no_rate_limits_leaves_line2_unchanged(self):
+        line2 = self._render_with({})[1]
+
+        self.assertEqual(line2, "📁 repo")
+
+    def test_session_name_rendered_last(self):
+        extra = {"session_name": "fix-bar", "rate_limits": {"five_hour": {"used_percentage": 23}}}
+
+        line2 = self._render_with(extra)[1]
+
+        self.assertEqual(line2, "📁 repo | 5h 23% | « fix-bar »")
+
+    def test_session_name_strips_control_chars_and_ansi(self):
+        line2 = self._render_with({"session_name": "[31mfix-bar"})[1]
+
+        self.assertEqual(line2, "📁 repo | « fix-bar »")
+
+    def test_session_name_truncated_to_max(self):
+        line2 = self._render_with({"session_name": "x" * 50})[1]
+
+        self.assertEqual(line2, "📁 repo | « " + "x" * ccbar.SESSION_NAME_MAX + " »")
+
+    def test_line2_without_folder_starts_with_rate_limits(self):
+        extra = {"workspace": {"current_dir": ""}, "rate_limits": {"five_hour": {"used_percentage": 23}}}
+
+        line2 = self._render_with(extra)[1]
+
+        self.assertEqual(line2, "5h 23%")
+
+    def test_malformed_new_fields_render_nothing(self):
+        extra = {"rate_limits": "garbage", "effort": 5, "session_name": None, "worktree": "x"}
+
+        lines = self._render_with(extra)
+
+        self.assertEqual(lines, ["[Opus 4.8]  " + "░" * 20 + "  0.0% (0 / 200,000) | $0.0000", "📁 repo"])
+
+
+class FmtDurationTests(unittest.TestCase):
+    def test_under_a_minute_is_zero_minutes(self):
+        self.assertEqual(ccbar._fmt_duration(59), "0m")
+
+    def test_hours_and_minutes(self):
+        self.assertEqual(ccbar._fmt_duration(7800), "2h10m")
+
+    def test_days_and_hours(self):
+        self.assertEqual(ccbar._fmt_duration(266400), "3d2h")
+
+
+class PctColorTests(unittest.TestCase):
+    def test_at_green_threshold_is_green(self):
+        self.assertEqual(ccbar._pct_color(60, {}), "green")
+
+    def test_just_above_green_is_yellow(self):
+        self.assertEqual(ccbar._pct_color(60.1, {}), "yellow")
+
+    def test_above_yellow_is_red(self):
+        self.assertEqual(ccbar._pct_color(80.1, {}), "red")
 
 
 if __name__ == "__main__":

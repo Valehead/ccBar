@@ -21,6 +21,13 @@ class BuildCommandsTests(unittest.TestCase):
         self.assertEqual(stop, "py -3 ~/.claude/ccbar.py --stop-hook")
 
 
+class BuildStatusLineTests(unittest.TestCase):
+    def test_sets_refresh_interval_to_30_seconds(self):
+        status_line = install.build_status_line("py -3 ~/.claude/ccbar.py")
+
+        self.assertEqual(status_line, {"type": "command", "command": "py -3 ~/.claude/ccbar.py", "refreshInterval": 30})
+
+
 class IsCcbarStopHookTests(unittest.TestCase):
     def test_matches_unquoted_copy_command(self):
         self.assertTrue(install.is_ccbar_stop_hook("py -3 ~/.claude/ccbar.py --stop-hook"))
