@@ -90,5 +90,12 @@
   "rate_limits": {
     "_comment": "show_reset: show time left until each 5h/7d window resets. Rate limits appear only for Pro/Max plans, after the first response.",
     "show_reset": true
+  },
+
+  "guards": {
+    "_comment": "Opt-in guard hooks, registered by install.py --guards. line_endings: after Edit/Write, block when a tracked file's line endings no longer match git's checkout form.",
+    "line_endings": {
+      "enabled": true
+    }
   }
 }

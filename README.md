@@ -69,7 +69,9 @@ python install.py
 | `--dry-run` | Print what would change; write nothing |
 | `--no-verify` | Skip self-test |
 | `--reset-config` | Overwrite your config with the latest example (backs up existing first) |
-| `--uninstall` | Remove `statusLine` from settings, optionally restore backup and remove files |
+| `--guards` | Register the [guard hooks](#guards) |
+| `--no-guards` | Remove the guard hooks |
+| `--uninstall` | Remove `statusLine`, the Stop hook, and guard hooks from settings, optionally restore backup and remove files |
 
 ---
 
@@ -78,6 +80,8 @@ python install.py
 ```sh
 python install.py --uninstall
 ```
+
+Guard hooks are removed along with the status line and Stop hook.
 
 ---
 
@@ -240,6 +244,30 @@ Once the handoff has fired, line 1 of the bar shows a `handoff ✓` marker.
   "threshold_pct": 85,
   "plans_dir": "~/.claude/plans",
   "prompt_template": "Read and execute this plan at: {path}"
+}
+```
+
+---
+
+## Guards
+
+Opt-in hooks that catch mistakes Claude makes while editing. Off until you register them:
+
+```sh
+python install.py --guards
+```
+
+`--no-guards` removes them. A plain `python install.py` keeps whatever is registered and refreshes the commands. Guards always run `guards.py` straight from the clone, in both install modes, so keep the clone where it is.
+
+**Line endings.** After every Edit or Write, `guards.py --line-endings` compares the file with `git cat-file --filters HEAD:<path>`, which applies `core.autocrlf` and `.gitattributes` exactly as a checkout would. If the file now has LF lines where the checkout form is CRLF (or the reverse), the hook exits 2 and Claude is told to convert them back. Files outside a repo, untracked files, and files with no clear style in git are skipped.
+
+Switch a guard off without reinstalling:
+
+```json
+"guards": {
+  "line_endings": {
+    "enabled": true
+  }
 }
 ```
 

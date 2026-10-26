@@ -84,6 +84,9 @@ DEFAULTS = {
         "plans_dir": "~/.claude/plans",
         "prompt_template": "Read and execute this plan at: {path}",
     },
+    "guards": {
+        "line_endings": {"enabled": True},
+    },
 }
 
 SESSION_NAME_MAX = 40
