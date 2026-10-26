@@ -123,6 +123,32 @@ class RemoveHooksTests(unittest.TestCase):
         self.assertEqual(settings, {"hooks": {"PostToolUse": [LINT_GROUP]}})
 
 
+class ApplyGuardsTests(unittest.TestCase):
+    POSTED_TEXT_ENTRY = {"type": "command", "command": 'py -3 "C:/dev/ccBar/guards.py" --posted-text', "timeout": 10}
+    SHELL_GROUP = {"matcher": "Bash", "hooks": [{"type": "command", "command": "audit.sh"}]}
+
+    def test_registers_both_guard_groups_on_empty_settings(self):
+        settings = {}
+
+        install.apply_guards(settings, ["py", "-3"], CLONE_DIR, True)
+
+        self.assertEqual(settings["hooks"], {
+            "PostToolUse": [{"hooks": [GUARD_ENTRY], "matcher": "Edit|Write"}],
+            "PreToolUse": [{"hooks": [self.POSTED_TEXT_ENTRY], "matcher": "Bash|PowerShell"}],
+        })
+
+    def test_rerun_does_not_duplicate_and_leaves_unrelated_pre_tool_use_group(self):
+        settings = {"hooks": {"PreToolUse": [copy_of(self.SHELL_GROUP)]}}
+
+        install.apply_guards(settings, ["py", "-3"], CLONE_DIR, True)
+        install.apply_guards(settings, ["py", "-3"], CLONE_DIR, True)
+
+        self.assertEqual(
+            settings["hooks"]["PreToolUse"],
+            [self.SHELL_GROUP, {"hooks": [self.POSTED_TEXT_ENTRY], "matcher": "Bash|PowerShell"}],
+        )
+
+
 class ResolveModeTests(unittest.TestCase):
     def test_existing_in_place_status_line_keeps_in_place(self):
         self.assertTrue(install.resolve_mode(IN_PLACE_STATUS, CLONE_DIR, []))

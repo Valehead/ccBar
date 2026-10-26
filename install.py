@@ -42,7 +42,10 @@ DEST_SKILLS_DIR = os.path.join(CLAUDE_DIR, "skills")
 STATE_DIR = os.path.join(CLAUDE_DIR, "ccbar-state")
 REFRESH_INTERVAL_S = 30
 # (event, matcher, flag, timeout_s)
-GUARD_HOOKS = (("PostToolUse", "Edit|Write", "--line-endings", 10),)
+GUARD_HOOKS = (
+    ("PostToolUse", "Edit|Write", "--line-endings", 10),
+    ("PreToolUse", "Bash|PowerShell", "--posted-text", 10),
+)
 
 
 def find_python():
