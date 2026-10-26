@@ -261,12 +261,18 @@ python install.py --guards
 
 **Line endings.** After every Edit or Write, `guards.py --line-endings` compares the file with `git cat-file --filters HEAD:<path>`, which applies `core.autocrlf` and `.gitattributes` exactly as a checkout would. If the file now has LF lines where the checkout form is CRLF (or the reverse), the hook exits 2 and Claude is told to convert them back. Files outside a repo, untracked files, and files with no clear style in git are skipped.
 
-Switch a guard off without reinstalling:
+**Posted text.** Before every Bash or PowerShell command (the hook matcher is `Bash|PowerShell`, since Claude on Windows posts through either tool), `guards.py --posted-text` checks commands that post text other people read: `gh pr` and `gh issue` `create`, `edit`, `comment`, and `review`; `gh api` calls to a `reviews` or `comments` endpoint; `az repos pr create|update`; `az boards work-item create|update`; and `az devops invoke` when `--resource` names threads or comments. If the command, or a body file it references (`--body-file`, `-F`, `--input`, `--in-file`, `key=@file`, `@file`), contains an entry from `banned`, the hook exits 2 and Claude is told to rewrite the text. Entries are literal substrings, not patterns. The default bans the em dash (U+2014). A `banned` list in your config replaces the default rather than adding to it, so include the em dash if you still want it. Every other command costs one regex search.
+
+Switch a guard off, or change the banned list, without reinstalling:
 
 ```json
 "guards": {
   "line_endings": {
     "enabled": true
+  },
+  "posted_text": {
+    "enabled": true,
+    "banned": ["—"]
   }
 }
 ```

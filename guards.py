@@ -6,6 +6,10 @@ Usage:
   python guards.py --line-endings   PostToolUse (Edit|Write): exit 2 when the edited
                                     file's line endings no longer match git's
                                     checkout form of it
+  python guards.py --posted-text    PreToolUse (Bash|PowerShell): exit 2 when a gh/az
+                                    command that posts text, or a body file it
+                                    references, contains a guards.posted_text.banned
+                                    entry
 
 Reads the hook payload as JSON on stdin. Exits 0 on anything it doesn't
 understand, so a guard never blocks work by accident.
@@ -13,6 +17,8 @@ understand, so a guard never blocks work by accident.
 
 import json
 import os
+import re
+import shlex
 import subprocess
 import sys
 
@@ -21,6 +27,15 @@ import sys
 import ccbar
 
 GIT_TIMEOUT_S = 5
+POSTING_RE = re.compile(
+    r"\bgh\s+(?:pr|issue)\s+(?:comment|review|create|edit)\b"
+    r"|\bgh\s+api\b.*?/(?:reviews|comments)\b"
+    r"|\baz\s+repos\s+pr\s+(?:create|update)\b"
+    r"|\baz\s+boards\s+work-item\s+(?:create|update)\b"
+    r"|\baz\s+devops\s+invoke\b.*?--resource[\s=]+\S*(?i:threads|comments)",
+    re.S,
+)
+FILE_FLAGS = ("--body-file", "--input", "--in-file")
 
 
 def count_line_endings(data):
@@ -42,6 +57,53 @@ def line_ending_problem(name, expected, current):
     return (
         f"{name}: expected {style} line endings (git checkout form), "
         f"found {n} {other} line(s). Convert them back to {style}."
+    )
+
+
+def is_posting_command(command):
+    return POSTING_RE.search(command) is not None
+
+
+def find_banned(text, banned):
+    """Return the first non-empty banned entry found in text, else None."""
+    return next((b for b in banned if isinstance(b, str) and b and b in text), None)
+
+
+def _unquote(token):
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in "\"'":
+        return token[1:-1]
+    return token
+
+
+def referenced_files(command, posix):
+    """Return the body file paths a posting command names. Touches no files."""
+    try:
+        tokens = shlex.split(command, posix=posix)
+    except ValueError:
+        return []
+    if not posix:
+        tokens = [_unquote(t) for t in tokens]
+    paths = []
+    for i, tok in enumerate(tokens):
+        nxt = tokens[i + 1] if i + 1 < len(tokens) else ""
+        # gh pr/issue -F is --body-file; gh api -F takes key=value, caught by "=@" below
+        if tok in FILE_FLAGS or (tok == "-F" and "=" not in nxt):
+            paths.append(nxt)
+        for flag in FILE_FLAGS:
+            if tok.startswith(flag + "="):
+                paths.append(tok[len(flag) + 1:])
+        if "=@" in tok:
+            paths.append(tok.split("=@", 1)[1])
+        elif tok.startswith("@"):
+            paths.append(tok[1:])
+    return [p for p in paths if p and p != "-"]
+
+
+def posted_text_message(hit, where):
+    code = f" (U+{ord(hit):04X})" if len(hit) == 1 else ""
+    return (
+        f'Posted text contains banned text "{hit}"{code} in {where}. '
+        "Rewrite it without that text and run the command again."
     )
 
 
@@ -83,11 +145,49 @@ def run_line_endings(payload, cfg):
     return 0
 
 
+def run_posted_text(payload, cfg):
+    guard = cfg["guards"]["posted_text"]
+    command = payload.get("tool_input", {}).get("command")
+    if not guard["enabled"] or not isinstance(command, str) or not command:
+        return 0
+    if not is_posting_command(command):
+        return 0
+    banned = guard["banned"]
+    hit = find_banned(command, banned)
+    if hit:
+        print(posted_text_message(hit, "the command"), file=sys.stderr)
+        return 2
+    cwd = payload.get("cwd")
+    # PowerShell paths use backslashes, which POSIX shlex would treat as escapes
+    for path in referenced_files(command, posix=payload.get("tool_name") != "PowerShell"):
+        if cwd and not os.path.isabs(path):
+            path = os.path.join(cwd, path)
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except OSError:
+            continue
+        hit = find_banned(text, banned)
+        if hit:
+            print(posted_text_message(hit, path), file=sys.stderr)
+            return 2
+    return 0
+
+
+RUNNERS = {"--line-endings": run_line_endings, "--posted-text": run_posted_text}
+
+
 def main():
-    if "--line-endings" not in sys.argv[1:]:
+    flag = next((a for a in sys.argv[1:] if a in RUNNERS), None)
+    if flag is None:
         sys.exit(0)
+    # A cp1252 console can't encode a banned entry like the em dash; the resulting
+    # UnicodeEncodeError would hit the except below and let the post through.
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     try:
-        code = run_line_endings(_read_payload(), ccbar.load_config())
+        code = RUNNERS[flag](_read_payload(), ccbar.load_config())
     except Exception as e:
         print(f"guards.py: {e}", file=sys.stderr)
         code = 0
