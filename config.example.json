@@ -11,7 +11,11 @@
     "git_dirty": true,
     "git_changes": true,
     "retro": true,
-    "handoff": true
+    "handoff": true,
+    "effort": true,
+    "worktree": true,
+    "rate_limits": true,
+    "session_name": true
   },
 
   "bar": {
@@ -38,7 +42,9 @@
     "insertions": "green",
     "deletions": "red",
     "retro": "magenta",
-    "handoff": "blue"
+    "handoff": "blue",
+    "worktree": "cyan",
+    "session_name": "white"
   },
 
   "no_color": false,
@@ -73,10 +79,16 @@
   },
 
   "icons": {
-    "_comment": "branch: glyph before branch name (empty string = no icon). folder: glyph before folder name (empty string = no icon). dirty: glyph used instead of git.dirty_marker when set (null = use dirty_marker). ascii_fallback: force plain-text icons.",
+    "_comment": "branch: glyph before branch name (empty string = no icon). folder: glyph before folder name (empty string = no icon). dirty: glyph used instead of git.dirty_marker when set (null = use dirty_marker). worktree: glyph before the worktree name (empty string = \"wt \"). ascii_fallback: force plain-text icons.",
     "branch": "🌿",
     "folder": "📁",
     "dirty": null,
+    "worktree": "⎇",
     "ascii_fallback": false
+  },
+
+  "rate_limits": {
+    "_comment": "show_reset: show time left until each 5h/7d window resets. Rate limits appear only for Pro/Max plans, after the first response.",
+    "show_reset": true
   }
 }

@@ -36,6 +36,7 @@ SRC_CONFIG_EXAMPLE = os.path.join(SCRIPT_DIR, "config.example.json")
 SRC_SKILLS_DIR = os.path.join(SCRIPT_DIR, "skills")
 DEST_SKILLS_DIR = os.path.join(CLAUDE_DIR, "skills")
 STATE_DIR = os.path.join(CLAUDE_DIR, "ccbar-state")
+REFRESH_INTERVAL_S = 30
 
 
 def find_python():
@@ -114,6 +115,10 @@ def build_commands(py_cmd, in_place, script_dir):
     return status, status + " --stop-hook"
 
 
+def build_status_line(command):
+    return {"type": "command", "command": command, "refreshInterval": REFRESH_INTERVAL_S}
+
+
 def resolve_mode(settings, script_dir, args):
     """Return True for in-place mode.
 
@@ -172,7 +177,7 @@ def install(dry_run=False, no_verify=False, reset_config=False, in_place=False):
         print(f"  Mode: copy (runs {DEST_SCRIPT})")
 
     status_command, stop_cmd = build_commands(py_cmd, in_place, SCRIPT_DIR)
-    status_cmd = {"type": "command", "command": status_command}
+    status_cmd = build_status_line(status_command)
 
     script_existed = os.path.isfile(DEST_SCRIPT)
     if in_place:

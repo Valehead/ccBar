@@ -25,6 +25,10 @@ DEFAULTS = {
         "git_changes": True,
         "retro": True,
         "handoff": True,
+        "effort": True,
+        "worktree": True,
+        "rate_limits": True,
+        "session_name": True,
     },
     "bar": {
         "width": 20,
@@ -44,6 +48,8 @@ DEFAULTS = {
         "deletions": "red",
         "retro": "magenta",
         "handoff": "blue",
+        "worktree": "cyan",
+        "session_name": "white",
     },
     "no_color": False,
     "cost": {
@@ -60,7 +66,11 @@ DEFAULTS = {
         "branch": "🌿",
         "folder": "📁",
         "dirty": None,
+        "worktree": "⎇",
         "ascii_fallback": False,
+    },
+    "rate_limits": {
+        "show_reset": True,
     },
     "retro": {
         "enabled": True,
@@ -75,6 +85,9 @@ DEFAULTS = {
         "prompt_template": "Read and execute this plan at: {path}",
     },
 }
+
+SESSION_NAME_MAX = 40
+RATE_WINDOWS = (("5h", "five_hour"), ("7d", "seven_day"))
 
 # ---------------------------------------------------------------------------
 # ANSI helpers
@@ -197,11 +210,57 @@ def context_tokens(data):
     return used, size
 
 
+def _as_dict(value):
+    return value if isinstance(value, dict) else {}
+
+
+def _is_number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _pct_color(pct, cfg):
+    colors = cfg.get("colors", {})
+    thresh = cfg.get("bar", {}).get("thresholds", {})
+    if pct <= thresh.get("green", 60):
+        return colors.get("bar_green", "green")
+    if pct <= thresh.get("yellow", 80):
+        return colors.get("bar_yellow", "yellow")
+    return colors.get("bar_red", "red")
+
+
+def _fmt_duration(seconds):
+    minutes = max(0, int(seconds)) // 60
+    hours, minutes = divmod(minutes, 60)
+    days, hours = divmod(hours, 24)
+    if days:
+        return f"{days}d{hours}h"
+    if hours:
+        return f"{hours}h{minutes}m"
+    return f"{minutes}m"
+
+
+def _rate_limits_text(data, cfg, now, c):
+    limits = _as_dict(data.get("rate_limits"))
+    show_reset = cfg.get("rate_limits", {}).get("show_reset", True)
+    parts = []
+    for label, key in RATE_WINDOWS:
+        window = _as_dict(limits.get(key))
+        pct = window.get("used_percentage")
+        if not _is_number(pct):
+            continue
+        text = f"{label} {pct:.0f}%"
+        resets_at = window.get("resets_at")
+        if show_reset and now is not None and _is_number(resets_at) and resets_at - now > 0:
+            text += f" ({_fmt_duration(resets_at - now)})"
+        parts.append(c(text, _pct_color(pct, cfg)))
+    return "  ".join(parts)
+
+
 def _workspace_dir(data):
     return data.get("workspace", {}).get("current_dir", os.getcwd())
 
 
-def render(data, cfg, git_info=None, events=None):
+def render(data, cfg, git_info=None, events=None, now=None):
     segs = cfg.get("segments", {})
     colors = cfg.get("colors", {})
     bar_cfg = cfg.get("bar", {})
@@ -224,16 +283,15 @@ def render(data, cfg, git_info=None, events=None):
     if "(" in model_raw:
         model_raw = model_raw[: model_raw.rfind("(")].strip()
 
+    ascii_fallback = icons.get("ascii_fallback", False)
+
+    effort = _as_dict(data.get("effort")).get("level")
+    if segs.get("effort", True) and model_raw and isinstance(effort, str) and effort:
+        sep = " - " if ascii_fallback else " · "
+        model_raw = f"{model_raw}{sep}{_sanitize_label(effort, 10)}"
+
     # ---- build line 1 ----
-    thresh = bar_cfg.get("thresholds", {})
-    t_green = thresh.get("green", 60)
-    t_yellow = thresh.get("yellow", 80)
-    if pct <= t_green:
-        bar_color = colors.get("bar_green", "green")
-    elif pct <= t_yellow:
-        bar_color = colors.get("bar_yellow", "yellow")
-    else:
-        bar_color = colors.get("bar_red", "red")
+    bar_color = _pct_color(pct, cfg)
 
     line1_parts = []
 
@@ -278,7 +336,6 @@ def render(data, cfg, git_info=None, events=None):
     branch = _sanitize_label(git_info.get("branch", ""))
     ins = git_info.get("insertions", 0)
     dels = git_info.get("deletions", 0)
-    ascii_fallback = icons.get("ascii_fallback", False)
 
     if folder:
         folder_icon = icons.get("folder", "📁")
@@ -308,7 +365,25 @@ def render(data, cfg, git_info=None, events=None):
             parts.append(c(f"-{dels}", colors.get("deletions", "red")))
         line2_parts.append("/".join(parts))
 
+    worktree = _as_dict(data.get("worktree")).get("name") or data.get("workspace", {}).get("git_worktree")
+    if segs.get("worktree", True) and isinstance(worktree, str) and worktree:
+        worktree_icon = icons.get("worktree", "⎇")
+        worktree_prefix = "wt " if (ascii_fallback or not worktree_icon) else worktree_icon + " "
+        line2_parts.append(c(worktree_prefix + _sanitize_label(worktree, 40), colors.get("worktree", "cyan")))
+
+    rate_text = _rate_limits_text(data, cfg, now, c) if segs.get("rate_limits", True) else ""
+
+    session_text = ""
+    session_name = data.get("session_name")
+    if segs.get("session_name", True) and isinstance(session_name, str) and session_name:
+        session_name = _sanitize_label(session_name, SESSION_NAME_MAX)
+        session_label = f'"{session_name}"' if ascii_fallback else f"« {session_name} »"
+        session_text = c(session_label, colors.get("session_name", "white"))
+
     line2 = "  ".join(line2_parts)
+    for group in (rate_text, session_text):
+        if group:
+            line2 = f"{line2} | {group}" if line2 else group
 
     return line1 + "\n" + line2
 
@@ -536,14 +611,23 @@ MOCK_1M = {
             "cache_read_input_tokens": 121000,
         },
     },
+    "effort": {"level": "high"},
+    "session_name": "selftest session",
+    "rate_limits": {
+        "five_hour": {"used_percentage": 23},
+        "seven_day": {"used_percentage": 41},
+    },
 }
 
 
 def selftest():
     cfg = load_config()
     ok = True
-    for label, mock in [("200k window", MOCK_200K), ("1M window", MOCK_1M)]:
-        out = render(mock, cfg, git_info=get_git_info(cfg, _workspace_dir(mock)))
+    now = int(time.time())
+    mock_1m = copy.deepcopy(MOCK_1M)
+    mock_1m["rate_limits"]["five_hour"]["resets_at"] = now + 7800
+    for label, mock in [("200k window", MOCK_200K), ("1M window", mock_1m)]:
+        out = render(mock, cfg, git_info=get_git_info(cfg, _workspace_dir(mock)), now=now)
         if not out.strip():
             print(f"FAIL: empty render for {label}", file=sys.stderr)
             ok = False
@@ -579,7 +663,7 @@ def main():
         cfg = load_config()
         state = update_event_state(data, cfg)
         git_info = cached_git_info(data, cfg, state)
-        print(render(data, cfg, git_info=git_info, events=state.get("events", {})))
+        print(render(data, cfg, git_info=git_info, events=state.get("events", {}), now=time.time()))
     except Exception:
         print("\n")
         sys.exit(0)
