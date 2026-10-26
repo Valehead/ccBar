@@ -12,9 +12,13 @@ Usage:
   python install.py --no-verify    Skip self-test after install
   python install.py --reset-config Overwrite your config with the latest example
                                    (backs up your existing config first)
-  python install.py --uninstall    Remove ccBar from settings.json
+  python install.py --guards       Register the guard hooks (guards.py, always run
+                                   from this clone)
+  python install.py --no-guards    Remove the guard hooks
+  python install.py --uninstall    Remove ccBar (and its guard hooks) from settings.json
 
 With neither --in-place nor --copy, the mode of the existing install is kept.
+With neither --guards nor --no-guards, registered guard hooks are kept.
 """
 
 import json
@@ -37,6 +41,8 @@ SRC_SKILLS_DIR = os.path.join(SCRIPT_DIR, "skills")
 DEST_SKILLS_DIR = os.path.join(CLAUDE_DIR, "skills")
 STATE_DIR = os.path.join(CLAUDE_DIR, "ccbar-state")
 REFRESH_INTERVAL_S = 30
+# (event, matcher, flag, timeout_s)
+GUARD_HOOKS = (("PostToolUse", "Edit|Write", "--line-endings", 10),)
 
 
 def find_python():
@@ -138,32 +144,74 @@ def is_ccbar_stop_hook(command):
     return "ccbar.py" in command and "--stop-hook" in command
 
 
-def remove_stop_hook(settings):
-    stop = settings.get("hooks", {}).get("Stop", [])
+def is_guard_hook(command):
+    return "guards.py" in command
+
+
+def build_guard_command(py_cmd, script_dir, flag):
+    script = '"' + script_dir.replace("\\", "/") + '/guards.py"'
+    return " ".join(py_cmd + [script, flag])
+
+
+def remove_hooks(settings, event, is_ours):
+    groups = settings.get("hooks", {}).get(event, [])
     kept = []
-    for group in stop:
-        hooks = [h for h in group.get("hooks", []) if not is_ccbar_stop_hook(h.get("command", ""))]
+    for group in groups:
+        hooks = [h for h in group.get("hooks", []) if not is_ours(h.get("command", ""))]
         if hooks:
             kept.append({**group, "hooks": hooks})
-    changed = kept != stop
+    changed = kept != groups
     if changed:
         if kept:
-            settings["hooks"]["Stop"] = kept
+            settings["hooks"][event] = kept
         else:
-            del settings["hooks"]["Stop"]
+            del settings["hooks"][event]
             if not settings["hooks"]:
                 del settings["hooks"]
     return changed
 
 
-def upsert_stop_hook(settings, command):
-    remove_stop_hook(settings)
-    settings.setdefault("hooks", {}).setdefault("Stop", []).append(
-        {"hooks": [{"type": "command", "command": command, "timeout": 10}]}
+def upsert_hook(settings, event, entry, is_ours, matcher=None):
+    remove_hooks(settings, event, is_ours)
+    group = {"hooks": [entry]}
+    if matcher is not None:
+        group["matcher"] = matcher
+    settings.setdefault("hooks", {}).setdefault(event, []).append(group)
+
+
+def has_guard_hooks(settings):
+    return any(
+        is_guard_hook(h.get("command", ""))
+        for groups in settings.get("hooks", {}).values()
+        for group in groups
+        for h in group.get("hooks", [])
     )
 
 
-def install(dry_run=False, no_verify=False, reset_config=False, in_place=False):
+def remove_guard_hooks(settings):
+    """Return the action lines to print."""
+    return [
+        f"Removed {event} guard hooks from {SETTINGS_PATH}"
+        for event in sorted({row[0] for row in GUARD_HOOKS})
+        if remove_hooks(settings, event, is_guard_hook)
+    ]
+
+
+def apply_guards(settings, py_cmd, script_dir, guards):
+    """Return the action lines to print. guards is True, False, or None (keep what's registered)."""
+    if guards is False:
+        return remove_guard_hooks(settings)
+    if guards is None and not has_guard_hooks(settings):
+        return []
+    actions = []
+    for event, matcher, flag, timeout in GUARD_HOOKS:
+        entry = {"type": "command", "command": build_guard_command(py_cmd, script_dir, flag), "timeout": timeout}
+        upsert_hook(settings, event, entry, lambda c, f=flag: is_guard_hook(c) and f in c, matcher)
+        actions.append(f"Registered {event} guard hook ({flag}) in {SETTINGS_PATH}")
+    return actions
+
+
+def install(dry_run=False, no_verify=False, reset_config=False, in_place=False, guards=None):
     print("=== ccBar installer ===\n")
 
     py_cmd, py_display = find_python()
@@ -233,12 +281,15 @@ def install(dry_run=False, no_verify=False, reset_config=False, in_place=False):
     settings = load_settings()
     prev = settings.get("statusLine")
     settings["statusLine"] = status_cmd
-    upsert_stop_hook(settings, stop_cmd)
+    upsert_hook(settings, "Stop", {"type": "command", "command": stop_cmd, "timeout": 10}, is_ccbar_stop_hook)
+    guard_actions = apply_guards(settings, py_cmd, SCRIPT_DIR, guards)
     save_settings(settings, dry_run)
     if not dry_run:
         verb = "Updated" if prev else "Added"
         print(f"  {verb} statusLine in {SETTINGS_PATH}")
         print(f"  Registered Stop hook (session retro) in {SETTINGS_PATH}")
+        for action in guard_actions:
+            print(f"  {action}")
 
     # Self-test
     if not no_verify and not dry_run:
@@ -258,8 +309,9 @@ def uninstall(dry_run=False):
 
     settings = load_settings()
     removed_status = settings.pop("statusLine", None) is not None
-    removed_stop = remove_stop_hook(settings)
-    if removed_status or removed_stop:
+    removed_stop = remove_hooks(settings, "Stop", is_ccbar_stop_hook)
+    removed_guards = remove_guard_hooks(settings)
+    if removed_status or removed_stop or removed_guards:
         save_settings(settings, dry_run)
     if removed_status:
         if not dry_run:
@@ -271,6 +323,9 @@ def uninstall(dry_run=False):
             print(f"  Removed Stop hook (session retro) from {SETTINGS_PATH}")
     else:
         print("  ccBar Stop hook not present in settings.json, nothing to remove.")
+    if not dry_run:
+        for action in removed_guards:
+            print(f"  {action}")
 
     if not dry_run and os.path.isfile(SETTINGS_BAK):
         ans = input("  Restore settings.json from backup? [y/N] ").strip().lower()
@@ -314,12 +369,16 @@ def main():
     if "--in-place" in args and "--copy" in args:
         print("ERROR: --in-place and --copy are mutually exclusive.", file=sys.stderr)
         sys.exit(2)
+    if "--guards" in args and "--no-guards" in args:
+        print("ERROR: --guards and --no-guards are mutually exclusive.", file=sys.stderr)
+        sys.exit(2)
+    guards = True if "--guards" in args else False if "--no-guards" in args else None
 
     if "--uninstall" in args:
         uninstall(dry_run=dry_run)
     else:
         in_place = resolve_mode(load_settings(), SCRIPT_DIR, args)
-        install(dry_run=dry_run, no_verify=no_verify, reset_config=reset_config, in_place=in_place)
+        install(dry_run=dry_run, no_verify=no_verify, reset_config=reset_config, in_place=in_place, guards=guards)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,13 @@ import install
 CLONE_DIR = "C:\\dev\\ccBar"
 IN_PLACE_STATUS = {"statusLine": {"type": "command", "command": 'py -3 "C:/dev/ccBar/ccbar.py"'}}
 ASYNC_GROUP = {"hooks": [{"type": "command", "command": "notify.sh", "async": True}]}
+LINT_GROUP = {"matcher": "Edit", "hooks": [{"type": "command", "command": "lint.sh"}]}
+GUARD_CMD = 'py -3 "C:/dev/ccBar/guards.py" --line-endings'
+GUARD_ENTRY = {"type": "command", "command": GUARD_CMD, "timeout": 10}
+
+
+def copy_of(obj):
+    return json.loads(json.dumps(obj))
 
 
 class BuildCommandsTests(unittest.TestCase):
@@ -39,18 +46,81 @@ class IsCcbarStopHookTests(unittest.TestCase):
         self.assertFalse(install.is_ccbar_stop_hook("notify.sh --on-stop"))
 
 
-class UpsertStopHookTests(unittest.TestCase):
-    def test_twice_leaves_one_ccbar_entry_and_unrelated_group_untouched(self):
-        settings = {"hooks": {"Stop": [json.loads(json.dumps(ASYNC_GROUP))]}}
-        stop_cmd = 'py -3 "C:/dev/ccBar/ccbar.py" --stop-hook'
+class IsGuardHookTests(unittest.TestCase):
+    def test_matches_guard_command(self):
+        self.assertTrue(install.is_guard_hook(GUARD_CMD))
 
-        install.upsert_stop_hook(settings, "py -3 ~/.claude/ccbar.py --stop-hook")
-        install.upsert_stop_hook(settings, stop_cmd)
+    def test_rejects_stop_hook(self):
+        self.assertFalse(install.is_guard_hook('py -3 "C:/dev/ccBar/ccbar.py" --stop-hook'))
+
+    def test_rejects_unrelated_command(self):
+        self.assertFalse(install.is_guard_hook("lint.sh"))
+
+
+class BuildGuardCommandTests(unittest.TestCase):
+    def test_quotes_clone_path_with_forward_slashes(self):
+        command = install.build_guard_command(["py", "-3"], CLONE_DIR, "--line-endings")
+
+        self.assertEqual(command, GUARD_CMD)
+
+
+class UpsertHookTests(unittest.TestCase):
+    def test_stop_hook_twice_leaves_one_ccbar_entry_and_unrelated_group_untouched(self):
+        settings = {"hooks": {"Stop": [copy_of(ASYNC_GROUP)]}}
+        stop_cmd = 'py -3 "C:/dev/ccBar/ccbar.py" --stop-hook'
+        old = {"type": "command", "command": "py -3 ~/.claude/ccbar.py --stop-hook", "timeout": 10}
+        new = {"type": "command", "command": stop_cmd, "timeout": 10}
+
+        install.upsert_hook(settings, "Stop", old, install.is_ccbar_stop_hook)
+        install.upsert_hook(settings, "Stop", new, install.is_ccbar_stop_hook)
 
         stop = settings["hooks"]["Stop"]
         ccbar_hooks = [h for g in stop for h in g["hooks"] if install.is_ccbar_stop_hook(h["command"])]
-        self.assertEqual(ccbar_hooks, [{"type": "command", "command": stop_cmd, "timeout": 10}])
+        self.assertEqual(ccbar_hooks, [new])
         self.assertEqual(json.dumps(stop[0]), json.dumps(ASYNC_GROUP))
+
+    def test_matcher_adds_group_and_leaves_unrelated_group_untouched(self):
+        settings = {"hooks": {"PostToolUse": [copy_of(LINT_GROUP)]}}
+
+        install.upsert_hook(settings, "PostToolUse", GUARD_ENTRY, install.is_guard_hook, "Edit|Write")
+
+        self.assertEqual(
+            settings["hooks"]["PostToolUse"],
+            [LINT_GROUP, {"hooks": [GUARD_ENTRY], "matcher": "Edit|Write"}],
+        )
+
+    def test_rerun_does_not_duplicate(self):
+        settings = {}
+
+        install.upsert_hook(settings, "PostToolUse", GUARD_ENTRY, install.is_guard_hook, "Edit|Write")
+        install.upsert_hook(settings, "PostToolUse", GUARD_ENTRY, install.is_guard_hook, "Edit|Write")
+
+        self.assertEqual(settings["hooks"]["PostToolUse"], [{"hooks": [GUARD_ENTRY], "matcher": "Edit|Write"}])
+
+
+class RemoveHooksTests(unittest.TestCase):
+    def test_drops_only_ours(self):
+        settings = {"hooks": {"PostToolUse": [copy_of(LINT_GROUP), {"matcher": "Edit|Write", "hooks": [GUARD_ENTRY]}]}}
+
+        changed = install.remove_hooks(settings, "PostToolUse", install.is_guard_hook)
+
+        self.assertTrue(changed)
+        self.assertEqual(settings["hooks"]["PostToolUse"], [LINT_GROUP])
+
+    def test_deletes_empty_event_and_hooks_keys(self):
+        settings = {"model": "opus", "hooks": {"PostToolUse": [{"matcher": "Edit|Write", "hooks": [GUARD_ENTRY]}]}}
+
+        install.remove_hooks(settings, "PostToolUse", install.is_guard_hook)
+
+        self.assertEqual(settings, {"model": "opus"})
+
+    def test_nothing_ours_reports_unchanged(self):
+        settings = {"hooks": {"PostToolUse": [copy_of(LINT_GROUP)]}}
+
+        changed = install.remove_hooks(settings, "PostToolUse", install.is_guard_hook)
+
+        self.assertFalse(changed)
+        self.assertEqual(settings, {"hooks": {"PostToolUse": [LINT_GROUP]}})
 
 
 class ResolveModeTests(unittest.TestCase):
