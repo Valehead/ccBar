@@ -263,6 +263,8 @@ python install.py --guards
 
 **Posted text.** Before every Bash or PowerShell command (the hook matcher is `Bash|PowerShell`, since Claude on Windows posts through either tool), `guards.py --posted-text` checks commands that post text other people read: `gh pr` and `gh issue` `create`, `edit`, `comment`, and `review`; `gh api` calls to a `reviews` or `comments` endpoint; `az repos pr create|update`; `az boards work-item create|update`; and `az devops invoke` when `--resource` names threads or comments. If the command, or a body file it references (`--body-file`, `-F`, `--input`, `--in-file`, `key=@file`, `@file`), contains an entry from `banned`, the hook exits 2 and Claude is told to rewrite the text. Entries are literal substrings, not patterns. The default bans the em dash (U+2014). A `banned` list in your config replaces the default rather than adding to it, so include the em dash if you still want it. Every other command costs one regex search.
 
+**Build gate.** Before every `git push` (including `git -C <dir> push`) or `gh pr create`, `guards.py --build-gate` builds the code the push is about to send. The repo is the payload's `cwd`, or the `<dir>` of a leading `cd <dir> &&` or of `git -C <dir>`. It lists the files changed by unpushed commits, compared with the branch's upstream, or `origin/HEAD` when there is none, and maps each one through the `builds` table. A row is `{"glob": ..., "root_marker": ..., "command": [...]}`. A file matching `glob` walks up from its directory to the repo root, and the first directory holding an entry that matches `root_marker` is its project root. Both are `fnmatch` patterns matched against repo-relative paths, where `*` crosses `/`, so `*.cs` matches `src/a/b.cs`. `command` is an argument list, not a shell string, and runs in the root. Each root builds once per push, with a timeout of 840 seconds. The build runs against the working tree. If a build fails, the hook exits 2 with the last 40 lines of its output and Claude is told to fix the errors before pushing. A build tool that isn't on PATH, a timeout, or a git failure lets the push through with one warning line. The table is empty by default, which turns the gate off. Every other command costs one regex search.
+
 Switch a guard off, or change the banned list, without reinstalling:
 
 ```json
@@ -273,7 +275,22 @@ Switch a guard off, or change the banned list, without reinstalling:
   "posted_text": {
     "enabled": true,
     "banned": ["—"]
+  },
+  "build_gate": {
+    "enabled": true,
+    "builds": []
   }
+}
+```
+
+A .NET example that builds the nearest solution when C# files change. Plain `dotnet build` restores packages as needed:
+
+```json
+"build_gate": {
+  "enabled": true,
+  "builds": [
+    {"glob": "*.cs", "root_marker": "*.sln", "command": ["dotnet", "build", "-v", "q", "-clp:ErrorsOnly"]}
+  ]
 }
 ```
 
