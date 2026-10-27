@@ -40,6 +40,7 @@ DEFAULTS = {
         "bar_green": "green",
         "bar_yellow": "yellow",
         "bar_red": "red",
+        "bar_empty": None,
         "cost": "cyan",
         "branch": "cyan",
         "dirty": "yellow",
@@ -106,6 +107,7 @@ _ANSI = {
     "magenta": "\x1b[35m",
     "cyan": "\x1b[36m",
     "white": "\x1b[37m",
+    "gray": "\x1b[90m",
 }
 
 
@@ -307,9 +309,11 @@ def render(data, cfg, git_info=None, events=None, now=None):
 
         filled = int(pct / 100 * bar_width)
         filled = max(0, min(filled, bar_width))
-        bar_str = filled_char * filled + empty_char * (bar_width - filled)
-
-        line1_parts.append(c(bar_str, bar_color))
+        empty_color = colors.get("bar_empty")
+        if empty_color:
+            line1_parts.append(c(filled_char * filled, bar_color) + c(empty_char * (bar_width - filled), empty_color))
+        else:
+            line1_parts.append(c(filled_char * filled + empty_char * (bar_width - filled), bar_color))
 
     if segs.get("context_pct", True):
         pct_text = f"{pct:.1f}% ({_fmt_num(used_tokens)} / {_fmt_num(cw_size)})"
