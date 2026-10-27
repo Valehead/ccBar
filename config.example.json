@@ -30,11 +30,12 @@
   },
 
   "colors": {
-    "_comment": "Valid values: reset bold black red green yellow blue magenta cyan white.",
+    "_comment": "Valid values: reset bold black red green yellow blue magenta cyan white gray. bar_empty: null uses the fill color.",
     "model": "bold",
     "bar_green": "green",
     "bar_yellow": "yellow",
     "bar_red": "red",
+    "bar_empty": null,
     "cost": "cyan",
     "branch": "cyan",
     "dirty": "yellow",

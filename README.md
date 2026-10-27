@@ -123,7 +123,9 @@ Switch to ASCII: set `"filled_char": "#"` and `"empty_char": "-"`.
 
 ### Colors
 
-Valid values: `reset`, `bold`, `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`.
+Valid values: `reset`, `bold`, `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, `gray`.
+
+`bar_empty` colors the unfilled cells; `null` (the default) uses the fill color; `gray` is a good dim choice.
 
 ```json
 "colors": {
@@ -131,6 +133,7 @@ Valid values: `reset`, `bold`, `black`, `red`, `green`, `yellow`, `blue`, `magen
   "bar_green": "green",
   "bar_yellow": "yellow",
   "bar_red": "red",
+  "bar_empty": null,
   "cost": "cyan",
   "branch": "cyan",
   "dirty": "yellow",

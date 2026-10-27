@@ -614,6 +614,28 @@ class RenderTests(unittest.TestCase):
 
         self.assertEqual(lines, ["[Opus 4.8]  " + "░" * 20 + "  0.0% (0 / 200,000) | $0.0000", "📁 repo"])
 
+    def test_bar_empty_null_keeps_single_color_bar(self):
+        extra = {"context_window": {"total_input_tokens": 100000, "context_window_size": 200000}}
+
+        line1 = self._render_with(extra, {"no_color": False})[0]
+
+        self.assertIn("\x1b[32m" + "█" * 10 + "░" * 10 + "\x1b[0m", line1)
+        self.assertNotIn(ccbar._ANSI["gray"], line1)
+
+    def test_bar_empty_colors_unfilled_cells(self):
+        extra = {"context_window": {"total_input_tokens": 100000, "context_window_size": 200000}}
+
+        line1 = self._render_with(extra, {"no_color": False, "colors": {"bar_empty": "gray"}})[0]
+
+        self.assertIn("\x1b[32m" + "█" * 10 + "\x1b[0m" + "\x1b[90m" + "░" * 10 + "\x1b[0m", line1)
+
+    def test_bar_empty_ignored_under_no_color(self):
+        extra = {"context_window": {"total_input_tokens": 100000, "context_window_size": 200000}}
+
+        line1 = self._render_with(extra, {"colors": {"bar_empty": "gray"}})[0]
+
+        self.assertNotIn("\x1b", line1)
+
 
 class FmtDurationTests(unittest.TestCase):
     def test_under_a_minute_is_zero_minutes(self):
