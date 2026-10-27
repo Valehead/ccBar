@@ -15,7 +15,8 @@
     "handoff": true,
     "effort": true,
     "worktree": true,
-    "rate_limits": true
+    "rate_limits": true,
+    "prompt_cache": true
   },
 
   "bar": {
@@ -31,7 +32,7 @@
   },
 
   "colors": {
-    "_comment": "Valid values: reset bold black red green yellow blue magenta cyan white gray. bar_empty: null uses the fill color. cost is used below cost.thresholds.yellow; duration colors the session running time.",
+    "_comment": "Valid values: reset bold black red green yellow blue magenta cyan white gray. bar_empty: null uses the fill color. cost is used below cost.thresholds.yellow; duration colors the session running time. cache_warm and cache_cold color the prompt cache group.",
     "model": "bold",
     "bar_green": "green",
     "bar_yellow": "yellow",
@@ -45,7 +46,9 @@
     "deletions": "red",
     "retro": "magenta",
     "handoff": "blue",
-    "worktree": "cyan"
+    "worktree": "cyan",
+    "cache_warm": "green",
+    "cache_cold": "yellow"
   },
 
   "no_color": false,
@@ -94,7 +97,7 @@
   },
 
   "rate_limits": {
-    "_comment": "show_reset: show time left until each 5h/7d window resets. Rate limits appear only for Pro/Max plans, after the first response.",
+    "_comment": "show_reset: show time left until the 5h window resets. Rate limits appear only for Pro/Max plans, after the first response.",
     "show_reset": true
   },
 

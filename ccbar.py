@@ -29,6 +29,7 @@ DEFAULTS = {
         "effort": True,
         "worktree": True,
         "rate_limits": True,
+        "prompt_cache": True,
     },
     "bar": {
         "width": 20,
@@ -51,6 +52,8 @@ DEFAULTS = {
         "retro": "magenta",
         "handoff": "blue",
         "worktree": "cyan",
+        "cache_warm": "green",
+        "cache_cold": "yellow",
     },
     "no_color": False,
     "cost": {
@@ -93,7 +96,7 @@ DEFAULTS = {
     },
 }
 
-RATE_WINDOWS = (("5h", "five_hour"), ("7d", "seven_day"))
+RATE_WINDOWS = (("5h", "five_hour"),)
 
 # ---------------------------------------------------------------------------
 # ANSI helpers
@@ -273,6 +276,25 @@ def _rate_limits_text(data, cfg, now, c):
     return "  ".join(parts)
 
 
+def _prompt_cache_text(data, cfg, now, c):
+    cache = _as_dict(data.get("prompt_cache"))
+    if not cache or cache.get("caching_observed") is False:
+        return ""
+    colors = cfg.get("colors", {})
+    parts = ["cache"]
+    ratio = cache.get("hit_ratio")
+    if _is_number(ratio):
+        parts.append(f"{ratio * 100:.0f}%")
+    if cache.get("warm") is True:
+        parts.append("warm")
+        expires_at = cache.get("expires_at")
+        if now is not None and _is_number(expires_at) and expires_at - now > 0:
+            parts.append(_fmt_duration(expires_at - now))
+        return c(" ".join(parts), colors.get("cache_warm", "green"))
+    parts.append("cold")
+    return c(" ".join(parts), colors.get("cache_cold", "yellow"))
+
+
 def _workspace_dir(data):
     return data.get("workspace", {}).get("current_dir", os.getcwd())
 
@@ -395,10 +417,12 @@ def render(data, cfg, git_info=None, events=None, now=None):
         line2_parts.append(c(worktree_prefix + _sanitize_label(worktree, 40), colors.get("worktree", "cyan")))
 
     rate_text = _rate_limits_text(data, cfg, now, c) if segs.get("rate_limits", True) else ""
+    cache_text = _prompt_cache_text(data, cfg, now, c) if segs.get("prompt_cache", True) else ""
 
     line2 = "  ".join(line2_parts)
-    if rate_text:
-        line2 = f"{line2} | {rate_text}" if line2 else rate_text
+    for group in (rate_text, cache_text):
+        if group:
+            line2 = f"{line2} | {group}" if line2 else group
 
     return line1 + "\n" + line2
 
@@ -640,6 +664,7 @@ def selftest():
     now = int(time.time())
     mock_1m = copy.deepcopy(MOCK_1M)
     mock_1m["rate_limits"]["five_hour"]["resets_at"] = now + 7800
+    mock_1m["prompt_cache"] = {"caching_observed": True, "warm": True, "hit_ratio": 0.92, "expires_at": now + 180}
     for label, mock in [("200k window", MOCK_200K), ("1M window", mock_1m)]:
         out = render(mock, cfg, git_info=get_git_info(cfg, _workspace_dir(mock)), now=now)
         if not out.strip():
