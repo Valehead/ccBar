@@ -14,8 +14,7 @@
     "handoff": true,
     "effort": true,
     "worktree": true,
-    "rate_limits": true,
-    "session_name": true
+    "rate_limits": true
   },
 
   "bar": {
@@ -43,8 +42,7 @@
     "deletions": "red",
     "retro": "magenta",
     "handoff": "blue",
-    "worktree": "cyan",
-    "session_name": "white"
+    "worktree": "cyan"
   },
 
   "no_color": false,
