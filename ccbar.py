@@ -20,6 +20,7 @@ DEFAULTS = {
         "context_bar": True,
         "context_pct": True,
         "cost": True,
+        "duration": True,
         "git_branch": True,
         "git_dirty": True,
         "git_changes": True,
@@ -42,6 +43,7 @@ DEFAULTS = {
         "bar_red": "red",
         "bar_empty": None,
         "cost": "cyan",
+        "duration": "white",
         "branch": "cyan",
         "dirty": "yellow",
         "insertions": "green",
@@ -54,6 +56,7 @@ DEFAULTS = {
     "cost": {
         "show": True,
         "decimals": 4,
+        "thresholds": {"yellow": 10.0, "red": 30.0},
         # cost is an estimate, not a billed charge
     },
     "git": {
@@ -232,6 +235,16 @@ def _pct_color(pct, cfg):
     return colors.get("bar_red", "red")
 
 
+def _cost_color(total, cfg):
+    colors = cfg.get("colors", {})
+    thresh = cfg.get("cost", {}).get("thresholds", {})
+    if total >= thresh.get("red", 30.0):
+        return colors.get("bar_red", "red")
+    if total >= thresh.get("yellow", 10.0):
+        return colors.get("bar_yellow", "yellow")
+    return colors.get("cost", "cyan")
+
+
 def _fmt_duration(seconds):
     minutes = max(0, int(seconds)) // 60
     hours, minutes = divmod(minutes, 60)
@@ -325,7 +338,11 @@ def render(data, cfg, git_info=None, events=None, now=None):
         total_cost = data.get("cost", {}).get("total_cost_usd", 0) or 0
         dec = cost_cfg.get("decimals", 4)
         cost_str = f"${total_cost:.{dec}f}"
-        line1 += " | " + c(cost_str, colors.get("cost", "cyan"))
+        line1 += " | " + c(cost_str, _cost_color(total_cost, cfg))
+
+    duration_ms = _as_dict(data.get("cost")).get("total_duration_ms")
+    if segs.get("duration", True) and _is_number(duration_ms):
+        line1 += " | " + c(_fmt_duration(duration_ms / 1000), colors.get("duration", "white"))
 
     for name in EVENTS:
         if segs.get(name, True) and (events or {}).get(name, {}).get("fired"):
@@ -598,7 +615,7 @@ MOCK_1M = {
     "session_id": "selftest-1m",
     "model": {"display_name": "Claude Opus 4.8 (1M context)"},
     "workspace": {"current_dir": os.path.expanduser("~")},
-    "cost": {"total_cost_usd": 1.2345},
+    "cost": {"total_cost_usd": 1.2345, "total_duration_ms": 3840000},
     "context_window": {
         "total_input_tokens": 821000,
         "context_window_size": 1000000,

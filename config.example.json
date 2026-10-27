@@ -2,11 +2,12 @@
   "_comment": "ccBar configuration. Copy to ~/.claude/ccbar.config.json. All fields optional — missing keys fall back to defaults.",
 
   "segments": {
-    "_comment": "Toggle each display segment on or off.",
+    "_comment": "Toggle each display segment on or off. duration: how long the session has run, after the cost.",
     "model": true,
     "context_bar": true,
     "context_pct": true,
     "cost": true,
+    "duration": true,
     "git_branch": true,
     "git_dirty": true,
     "git_changes": true,
@@ -30,13 +31,14 @@
   },
 
   "colors": {
-    "_comment": "Valid values: reset bold black red green yellow blue magenta cyan white gray. bar_empty: null uses the fill color.",
+    "_comment": "Valid values: reset bold black red green yellow blue magenta cyan white gray. bar_empty: null uses the fill color. cost is used below cost.thresholds.yellow; duration colors the session running time.",
     "model": "bold",
     "bar_green": "green",
     "bar_yellow": "yellow",
     "bar_red": "red",
     "bar_empty": null,
     "cost": "cyan",
+    "duration": "white",
     "branch": "cyan",
     "dirty": "yellow",
     "insertions": "green",
@@ -51,7 +53,12 @@
   "cost": {
     "_comment": "Cost display is an estimate only and does not reflect your billed charge.",
     "show": true,
-    "decimals": 4
+    "decimals": 4,
+    "thresholds": {
+      "_comment": "USD. Below yellow uses colors.cost, from yellow colors.bar_yellow, from red colors.bar_red.",
+      "yellow": 10.0,
+      "red": 30.0
+    }
   },
 
   "retro": {

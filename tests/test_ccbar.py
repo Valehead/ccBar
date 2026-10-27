@@ -636,6 +636,33 @@ class RenderTests(unittest.TestCase):
 
         self.assertNotIn("\x1b", line1)
 
+    def test_duration_rendered_after_cost(self):
+        line1 = self._render_with({"cost": {"total_cost_usd": 0, "total_duration_ms": 3840000}})[0]
+
+        self.assertTrue(line1.endswith("| $0.0000 | 1h4m"))
+
+    def test_missing_duration_renders_nothing(self):
+        line1 = self._render_with({"cost": {"total_cost_usd": 0}})[0]
+
+        self.assertEqual(line1, "[Opus 4.8]  " + "░" * 20 + "  0.0% (0 / 200,000) | $0.0000")
+
+    def test_non_numeric_duration_renders_nothing(self):
+        line1 = self._render_with({"cost": {"total_cost_usd": 0, "total_duration_ms": "x"}})[0]
+
+        self.assertTrue(line1.endswith("| $0.0000"))
+
+    def test_duration_segment_off(self):
+        extra = {"cost": {"total_cost_usd": 0, "total_duration_ms": 3840000}}
+
+        line1 = self._render_with(extra, {"segments": {"duration": False}})[0]
+
+        self.assertTrue(line1.endswith("| $0.0000"))
+
+    def test_cost_over_yellow_uses_yellow(self):
+        line1 = self._render_with({"cost": {"total_cost_usd": 12.5}}, {"no_color": False})[0]
+
+        self.assertIn("\x1b[33m$12.5000\x1b[0m", line1)
+
 
 class FmtDurationTests(unittest.TestCase):
     def test_under_a_minute_is_zero_minutes(self):
@@ -657,6 +684,23 @@ class PctColorTests(unittest.TestCase):
 
     def test_above_yellow_is_red(self):
         self.assertEqual(ccbar._pct_color(80.1, {}), "red")
+
+
+class CostColorTests(unittest.TestCase):
+    def test_under_yellow_uses_cost_color(self):
+        self.assertEqual(ccbar._cost_color(9.99, {"colors": {"cost": "blue"}}), "blue")
+
+    def test_at_yellow_threshold_is_yellow(self):
+        self.assertEqual(ccbar._cost_color(10.0, {}), "yellow")
+
+    def test_at_red_threshold_is_red(self):
+        self.assertEqual(ccbar._cost_color(30.0, {}), "red")
+
+    def test_user_thresholds_override_defaults(self):
+        cfg = {"cost": {"thresholds": {"yellow": 1.0, "red": 2.0}}}
+
+        self.assertEqual(ccbar._cost_color(1.5, cfg), "yellow")
+        self.assertEqual(ccbar._cost_color(2.0, cfg), "red")
 
 
 if __name__ == "__main__":

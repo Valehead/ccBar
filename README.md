@@ -8,7 +8,7 @@ A two-line ANSI status bar for [Claude Code](https://claude.ai/code), showing co
 
 ## What it shows
 
-**Line 1** — Model name (bold) + color-coded context bar + percentage and token counts + optional cost estimate + `retro ✓` once the session retro has fired + `handoff ✓` once the session handoff has fired.
+**Line 1** — Model name (bold) + color-coded context bar + percentage and token counts + optional cost estimate (yellow from $10, red from $30) + session duration (e.g. `1h4m`) + `retro ✓` once the session retro has fired + `handoff ✓` once the session handoff has fired.
 
 **Line 2** — Folder name + git branch + a dirty marker (`*`) when anything is uncommitted, untracked files included + `+N/-N` line counts covering both staged and unstaged changes.
 
@@ -97,6 +97,7 @@ Copy `config.example.json` to `~/.claude/ccbar.config.json` (the installer does 
   "context_bar": true,
   "context_pct": true,
   "cost": false,
+  "duration": true,
   "git_branch": true,
   "git_dirty": true,
   "git_changes": true,
@@ -135,6 +136,7 @@ Valid values: `reset`, `bold`, `black`, `red`, `green`, `yellow`, `blue`, `magen
   "bar_red": "red",
   "bar_empty": null,
   "cost": "cyan",
+  "duration": "white",
   "branch": "cyan",
   "dirty": "yellow",
   "insertions": "green",
@@ -152,11 +154,14 @@ Set `"no_color": true` to strip all ANSI codes.
 ```json
 "cost": {
   "show": false,
-  "decimals": 4
+  "decimals": 4,
+  "thresholds": { "yellow": 10.0, "red": 30.0 }
 }
 ```
 
 The cost figure is an **estimate** taken from Claude Code's own tracking. It is not your billed charge.
+
+`thresholds` are in USD. Below `yellow` the cost uses `colors.cost`; from `yellow` it uses `colors.bar_yellow`, and from `red` `colors.bar_red`.
 
 ### Git
 
