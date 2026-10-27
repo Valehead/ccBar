@@ -1,8 +1,8 @@
 {
-  "_comment": "ccBar configuration. Copy to ~/.claude/ccbar.config.json. All fields optional — missing keys fall back to defaults.",
+  "_comment": "ccBar configuration, read from ~/.claude/ccbar.config.json. Every key is optional; a missing key uses its default. A list you set replaces the default list rather than adding to it. Unknown keys are ignored.",
 
   "segments": {
-    "_comment": "Toggle each display segment on or off. duration: how long the session has run, after the cost.",
+    "_comment": "Switch each status line segment on (true) or off (false). retro and handoff hide only the line 1 markers; to stop the events themselves, use retro.enabled and handoff.enabled.",
     "model": true,
     "context_bar": true,
     "context_pct": true,
@@ -20,19 +20,19 @@
   },
 
   "bar": {
-    "_comment": "The fill/empty characters can be any UTF-8 glyph or ASCII fallback.",
+    "_comment": "The context bar. filled_char and empty_char can be any character; use # and - on terminals without block characters.",
     "width": 20,
     "filled_char": "█",
     "empty_char": "░",
     "thresholds": {
-      "_comment": "Percentages. green up to this value, yellow up to the next, red above yellow.",
+      "_comment": "Context percent. Green up to green, yellow up to yellow, red above. Rate limits use the same thresholds.",
       "green": 60,
       "yellow": 80
     }
   },
 
   "colors": {
-    "_comment": "Valid values: reset bold black red green yellow blue magenta cyan white gray. bar_empty: null uses the fill color. cost is used below cost.thresholds.yellow; duration colors the session running time. cache_warm and cache_cold color the prompt cache group.",
+    "_comment": "Valid values: reset bold black red green yellow blue magenta cyan white gray. bar_empty colors the unfilled bar cells; null uses the fill color. cost is used below cost.thresholds.yellow. cache_warm and cache_cold color the prompt cache group.",
     "model": "bold",
     "bar_green": "green",
     "bar_yellow": "yellow",
@@ -54,25 +54,25 @@
   "no_color": false,
 
   "cost": {
-    "_comment": "Cost display is an estimate only and does not reflect your billed charge.",
+    "_comment": "The cost is Claude Code's own estimate, not your billed charge. show: false hides it, same as segments.cost.",
     "show": true,
     "decimals": 4,
     "thresholds": {
-      "_comment": "USD. Below yellow uses colors.cost, from yellow colors.bar_yellow, from red colors.bar_red.",
+      "_comment": "USD. Below yellow the cost uses colors.cost, from yellow colors.bar_yellow, from red colors.bar_red.",
       "yellow": 10.0,
       "red": 30.0
     }
   },
 
   "retro": {
-    "_comment": "Session retro. Fires once per session when context reaches threshold_tokens OR threshold_pct of the model's window, whichever comes first. The Stop hook then tells Claude to run the session-retro skill.",
+    "_comment": "Session retro. Once per session, when context reaches threshold_tokens or threshold_pct of the model's window (whichever comes first), the Stop hook tells Claude to run the session-retro skill. enabled: false turns it off.",
     "enabled": true,
     "threshold_tokens": 400000,
     "threshold_pct": 70
   },
 
   "handoff": {
-    "_comment": "Fires once per session when context reaches threshold_tokens OR threshold_pct, whichever comes first. The Stop hook then tells Claude to run the session-handoff skill.",
+    "_comment": "Session handoff. Once per session, when context reaches threshold_tokens or threshold_pct (whichever comes first), the Stop hook tells Claude to run the session-handoff skill, which writes a plan to plans_dir and prints prompt_template with {path} set to the plan's path. enabled: false turns it off.",
     "enabled": true,
     "threshold_tokens": 600000,
     "threshold_pct": 85,
@@ -81,7 +81,7 @@
   },
 
   "git": {
-    "_comment": "timeout_ms: per-command git timeout in milliseconds. cache_ttl_ms: how long a git result is reused before git runs again. dirty_marker: text shown after the branch when there are uncommitted or untracked changes.",
+    "_comment": "dirty_marker: text shown after the branch when anything is uncommitted, untracked files included. timeout_ms: cap on each git call in milliseconds; a slower call is left off the bar. cache_ttl_ms: how long a git result is reused before git runs again.",
     "dirty_marker": "*",
     "timeout_ms": 800,
     "cache_ttl_ms": 3000
@@ -97,18 +97,18 @@
   },
 
   "rate_limits": {
-    "_comment": "show_reset: show time left until the 5h window resets. Rate limits appear only for Pro/Max plans, after the first response.",
+    "_comment": "show_reset: show the time left until the 5h window resets. Claude Code sends rate limits only on Pro and Max plans, after the first response.",
     "show_reset": true
   },
 
   "guards": {
-    "_comment": "Opt-in guard hooks, registered by install.py --guards. line_endings: after Edit/Write, block when a tracked file's line endings no longer match git's checkout form. posted_text: before a gh/az command that posts text, block when it or a body file it references contains a banned entry (literal substrings; your list replaces the default). build_gate: before git push or gh pr create, build the project roots touched by unpushed commits and block on a failed build; empty builds means off; see the README for the row format.",
+    "_comment": "Optional guard hooks, active only after install.py --guards. enabled: false switches one guard off. line_endings: after Edit/Write, block when a tracked file's line endings no longer match git's checkout form. posted_text: before a gh/az command that posts text, block when it or a body file it references contains a banned entry; entries are literal substrings, and an empty list does nothing (example entry: \"—\", the em dash). build_gate: before git push or gh pr create, build the project roots touched by unpushed commits and block on a failed build; an empty builds list does nothing; see the README for the row format and examples.",
     "line_endings": {
       "enabled": true
     },
     "posted_text": {
       "enabled": true,
-      "banned": ["—"]
+      "banned": []
     },
     "build_gate": {
       "enabled": true,

@@ -91,7 +91,7 @@ DEFAULTS = {
     },
     "guards": {
         "line_endings": {"enabled": True},
-        "posted_text": {"enabled": True, "banned": ["—"]},
+        "posted_text": {"enabled": True, "banned": []},
         "build_gate": {"enabled": True, "builds": []},
     },
 }

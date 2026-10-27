@@ -56,4 +56,4 @@ Nothing after that line.
 
 Don't continue the prior task, don't commit, don't push.
 
-Write in the user's style: terse, no em dashes.
+Write in the user's style, following any writing rules in their CLAUDE.md files or memory.
