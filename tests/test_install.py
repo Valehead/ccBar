@@ -125,17 +125,31 @@ class RemoveHooksTests(unittest.TestCase):
 
 class ApplyGuardsTests(unittest.TestCase):
     POSTED_TEXT_ENTRY = {"type": "command", "command": 'py -3 "C:/dev/ccBar/guards.py" --posted-text', "timeout": 10}
+    BUILD_GATE_ENTRY = {"type": "command", "command": 'py -3 "C:/dev/ccBar/guards.py" --build-gate', "timeout": 900}
     SHELL_GROUP = {"matcher": "Bash", "hooks": [{"type": "command", "command": "audit.sh"}]}
 
-    def test_registers_both_guard_groups_on_empty_settings(self):
+    def test_registers_all_guard_groups_on_empty_settings(self):
         settings = {}
 
         install.apply_guards(settings, ["py", "-3"], CLONE_DIR, True)
 
         self.assertEqual(settings["hooks"], {
             "PostToolUse": [{"hooks": [GUARD_ENTRY], "matcher": "Edit|Write"}],
-            "PreToolUse": [{"hooks": [self.POSTED_TEXT_ENTRY], "matcher": "Bash|PowerShell"}],
+            "PreToolUse": [
+                {"hooks": [self.POSTED_TEXT_ENTRY], "matcher": "Bash|PowerShell"},
+                {"hooks": [self.BUILD_GATE_ENTRY], "matcher": "Bash|PowerShell"},
+            ],
         })
+
+    def test_build_gate_lands_in_its_own_group_beside_posted_text(self):
+        settings = {"hooks": {"PreToolUse": [{"hooks": [copy_of(self.POSTED_TEXT_ENTRY)], "matcher": "Bash|PowerShell"}]}}
+
+        install.apply_guards(settings, ["py", "-3"], CLONE_DIR, True)
+
+        self.assertEqual(settings["hooks"]["PreToolUse"], [
+            {"hooks": [self.POSTED_TEXT_ENTRY], "matcher": "Bash|PowerShell"},
+            {"hooks": [self.BUILD_GATE_ENTRY], "matcher": "Bash|PowerShell"},
+        ])
 
     def test_rerun_does_not_duplicate_and_leaves_unrelated_pre_tool_use_group(self):
         settings = {"hooks": {"PreToolUse": [copy_of(self.SHELL_GROUP)]}}
@@ -145,7 +159,11 @@ class ApplyGuardsTests(unittest.TestCase):
 
         self.assertEqual(
             settings["hooks"]["PreToolUse"],
-            [self.SHELL_GROUP, {"hooks": [self.POSTED_TEXT_ENTRY], "matcher": "Bash|PowerShell"}],
+            [
+                self.SHELL_GROUP,
+                {"hooks": [self.POSTED_TEXT_ENTRY], "matcher": "Bash|PowerShell"},
+                {"hooks": [self.BUILD_GATE_ENTRY], "matcher": "Bash|PowerShell"},
+            ],
         )
 
 

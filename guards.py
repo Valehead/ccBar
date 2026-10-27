@@ -10,15 +10,20 @@ Usage:
                                     command that posts text, or a body file it
                                     references, contains a guards.posted_text.banned
                                     entry
+  python guards.py --build-gate     PreToolUse (Bash|PowerShell): before git push or
+                                    gh pr create, build the project roots the unpushed
+                                    commits touched; exit 2 on a failed build
 
 Reads the hook payload as JSON on stdin. Exits 0 on anything it doesn't
 understand, so a guard never blocks work by accident.
 """
 
+import fnmatch
 import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 
@@ -36,6 +41,9 @@ POSTING_RE = re.compile(
     re.S,
 )
 FILE_FLAGS = ("--body-file", "--input", "--in-file")
+BUILD_TIMEOUT_S = 840
+BUILD_OUTPUT_LINES = 40
+PUSH_RE = re.compile(r"\bgit\b(?:\s+-C\s+\S+)?\s+push\b|\bgh\s+pr\s+create\b")
 
 
 def count_line_endings(data):
@@ -107,6 +115,72 @@ def posted_text_message(hit, where):
     )
 
 
+def is_push_command(command):
+    return PUSH_RE.search(command) is not None
+
+
+def push_dir(command, cwd, posix):
+    """Return the directory a push command runs in: a leading cd, else git -C, else cwd."""
+    try:
+        tokens = shlex.split(command, posix=posix)
+    except ValueError:
+        return cwd
+    if not posix:
+        tokens = [_unquote(t) for t in tokens]
+    d = None
+    if len(tokens) >= 3 and tokens[0] in ("cd", "Set-Location") and tokens[2] in ("&&", ";"):
+        d = tokens[1]
+    else:
+        for i, tok in enumerate(tokens[:-2]):
+            if tok == "git" and tokens[i + 1] == "-C":
+                d = tokens[i + 2]
+                break
+    if d is None:
+        return cwd
+    return os.path.join(cwd, d)
+
+
+def _valid_build_row(row):
+    return (
+        isinstance(row, dict)
+        and isinstance(row.get("glob"), str)
+        and isinstance(row.get("root_marker"), str)
+        and isinstance(row.get("command"), list)
+        and len(row["command"]) > 0
+    )
+
+
+def matching_roots(changed, builds, top, isdir, listdir):
+    """Return de-duplicated (root, command) pairs, in first-seen order, for the changed files."""
+    rows = [r for r in builds if _valid_build_row(r)]
+    roots = []
+    for path in changed:
+        for row in rows:
+            if not fnmatch.fnmatch(path, row["glob"]):
+                continue
+            d = os.path.normpath(os.path.join(top, os.path.dirname(path)))
+            while True:
+                # A deleted file's directory may be gone; keep walking up
+                if isdir(d) and fnmatch.filter(listdir(d), row["root_marker"]):
+                    pair = (d, tuple(row["command"]))
+                    if pair not in roots:
+                        roots.append(pair)
+                    break
+                parent = os.path.dirname(d)
+                if d == top or parent == d:
+                    break
+                d = parent
+    return roots
+
+
+def trim_output(text, n=BUILD_OUTPUT_LINES):
+    return "\n".join([line for line in text.splitlines() if line.strip()][-n:])
+
+
+def build_failed_message(root, command, output):
+    return f"Build failed in {root} ({' '.join(command)}). Fix these errors before pushing:\n" + trim_output(output)
+
+
 def _read_payload():
     return json.loads(sys.stdin.buffer.read().decode("utf-8"))
 
@@ -117,6 +191,34 @@ def _git(args, cwd):
     except (OSError, subprocess.TimeoutExpired):
         return None
     return r.stdout if r.returncode == 0 else None
+
+
+def changed_files(top):
+    """Return the repo-relative paths changed by unpushed commits, or None on any git failure."""
+    upstream = _git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], top)
+    ref = upstream.decode().strip() if upstream is not None else "origin/HEAD"
+    base = _git(["merge-base", "HEAD", ref], top)
+    if base is None:
+        return None
+    diff = _git(["diff", "--name-only", base.decode().strip() + "..HEAD"], top)
+    if diff is None:
+        return None
+    return [line for line in diff.decode("utf-8").splitlines() if line]
+
+
+def run_build(root, command):
+    """Return (returncode, output); returncode is None when the build couldn't run."""
+    # which() applies PATHEXT on Windows, so "dotnet" or "npm" finds the .exe/.cmd
+    exe = shutil.which(command[0])
+    if exe is None:
+        return None, f"{command[0]} not found on PATH"
+    try:
+        r = subprocess.run([exe] + list(command[1:]), cwd=root, capture_output=True, timeout=BUILD_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        return None, f"timed out after {BUILD_TIMEOUT_S}s"
+    except OSError as e:
+        return None, str(e)
+    return r.returncode, r.stdout.decode("utf-8", errors="replace") + r.stderr.decode("utf-8", errors="replace")
 
 
 def run_line_endings(payload, cfg):
@@ -176,7 +278,36 @@ def run_posted_text(payload, cfg):
     return 0
 
 
-RUNNERS = {"--line-endings": run_line_endings, "--posted-text": run_posted_text}
+def run_build_gate(payload, cfg):
+    guard = cfg["guards"]["build_gate"]
+    command = payload.get("tool_input", {}).get("command")
+    if not guard["enabled"] or not guard["builds"] or not isinstance(command, str):
+        return 0
+    if not is_push_command(command):
+        return 0
+    d = push_dir(command, payload.get("cwd"), posix=payload.get("tool_name") != "PowerShell")
+    top = _git(["rev-parse", "--show-toplevel"], d)
+    if top is None:
+        return 0
+    top = os.path.normpath(top.decode().strip())
+    changed = changed_files(top)
+    if not changed:
+        return 0
+    for root, build in matching_roots(changed, guard["builds"], top, os.path.isdir, os.listdir):
+        code, output = run_build(root, build)
+        if code is None:
+            print(f"guards.py: build gate skipped {root}: {output}", file=sys.stderr)
+        elif code != 0:
+            print(build_failed_message(root, build, output), file=sys.stderr)
+            return 2
+    return 0
+
+
+RUNNERS = {
+    "--line-endings": run_line_endings,
+    "--posted-text": run_posted_text,
+    "--build-gate": run_build_gate,
+}
 
 
 def main():

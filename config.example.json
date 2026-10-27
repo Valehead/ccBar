@@ -93,13 +93,17 @@
   },
 
   "guards": {
-    "_comment": "Opt-in guard hooks, registered by install.py --guards. line_endings: after Edit/Write, block when a tracked file's line endings no longer match git's checkout form. posted_text: before a gh/az command that posts text, block when it or a body file it references contains a banned entry (literal substrings; your list replaces the default).",
+    "_comment": "Opt-in guard hooks, registered by install.py --guards. line_endings: after Edit/Write, block when a tracked file's line endings no longer match git's checkout form. posted_text: before a gh/az command that posts text, block when it or a body file it references contains a banned entry (literal substrings; your list replaces the default). build_gate: before git push or gh pr create, build the project roots touched by unpushed commits and block on a failed build; empty builds means off; see the README for the row format.",
     "line_endings": {
       "enabled": true
     },
     "posted_text": {
       "enabled": true,
       "banned": ["—"]
+    },
+    "build_gate": {
+      "enabled": true,
+      "builds": []
     }
   }
 }

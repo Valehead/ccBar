@@ -241,5 +241,186 @@ class RunPostedTextTests(unittest.TestCase):
         self.assertEqual(code, 0)
 
 
+PY_ROW = {"glob": "*.py", "root_marker": "setup.cfg", "command": ["tool", "build"]}
+TOP = os.path.normpath("/r")
+
+
+def build_gate_cfg(enabled=True, builds=(PY_ROW,)):
+    return {"guards": {"build_gate": {"enabled": enabled, "builds": list(builds)}}}
+
+
+def fake_tree(tree):
+    """Map repo-relative dirs to their entries; return (isdir, listdir) over it."""
+    full = {os.path.normpath(os.path.join(TOP, d)): entries for d, entries in tree.items()}
+    return full.__contains__, full.__getitem__
+
+
+class IsPushCommandTests(unittest.TestCase):
+    def test_push_commands_match(self):
+        commands = ("git push", "git push -u origin x", "git -C ../r push", "gh pr create --fill", "cd r && git push")
+
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertTrue(guards.is_push_command(command))
+
+    def test_non_push_commands_do_not_match(self):
+        commands = ("git status", "git pull", "gh pr view", "echo push")
+
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertFalse(guards.is_push_command(command))
+
+
+class PushDirTests(unittest.TestCase):
+    def test_leading_cd_gives_that_dir(self):
+        self.assertEqual(guards.push_dir("cd sub && git push", "/w", True), os.path.join("/w", "sub"))
+
+    def test_git_dash_c_absolute_dir(self):
+        self.assertEqual(guards.push_dir("git -C /abs push", "/w", True), "/abs")
+
+    def test_plain_push_gives_cwd(self):
+        self.assertEqual(guards.push_dir("git push", "/w", True), "/w")
+
+    def test_unbalanced_quotes_give_cwd(self):
+        self.assertEqual(guards.push_dir('git -C "r push', "/w", True), "/w")
+
+    def test_non_posix_keeps_backslash_dir(self):
+        self.assertEqual(guards.push_dir('git -C "C:\\r" push', "C:\\w", False), os.path.join("C:\\w", "C:\\r"))
+
+
+class MatchingRootsTests(unittest.TestCase):
+    def test_nearest_marker_wins(self):
+        isdir, listdir = fake_tree({"": ["setup.cfg"], "pkg": ["setup.cfg"], "pkg/src": ["a.py"]})
+
+        roots = guards.matching_roots(["pkg/src/a.py"], [PY_ROW], TOP, isdir, listdir)
+
+        self.assertEqual(roots, [(os.path.join(TOP, "pkg"), ("tool", "build"))])
+
+    def test_two_files_under_one_root_give_one_entry(self):
+        isdir, listdir = fake_tree({"": ["setup.cfg", "a.py", "b.py"]})
+
+        roots = guards.matching_roots(["a.py", "b.py"], [PY_ROW], TOP, isdir, listdir)
+
+        self.assertEqual(roots, [(TOP, ("tool", "build"))])
+
+    def test_file_matching_no_glob_gives_nothing(self):
+        isdir, listdir = fake_tree({"": ["setup.cfg", "README.md"]})
+
+        self.assertEqual(guards.matching_roots(["README.md"], [PY_ROW], TOP, isdir, listdir), [])
+
+    def test_no_marker_up_to_top_gives_nothing(self):
+        isdir, listdir = fake_tree({"": ["pkg"], "pkg": ["a.py"]})
+
+        self.assertEqual(guards.matching_roots(["pkg/a.py"], [PY_ROW], TOP, isdir, listdir), [])
+
+    def test_deleted_files_missing_dir_is_skipped_and_walk_continues(self):
+        isdir, listdir = fake_tree({"": ["setup.cfg"]})
+
+        roots = guards.matching_roots(["gone/a.py"], [PY_ROW], TOP, isdir, listdir)
+
+        self.assertEqual(roots, [(TOP, ("tool", "build"))])
+
+    def test_invalid_rows_are_skipped(self):
+        isdir, listdir = fake_tree({"": ["setup.cfg", "a.py"]})
+        rows = [dict(PY_ROW, command="tool build"), {"glob": "*.py", "command": ["tool"]}]
+
+        self.assertEqual(guards.matching_roots(["a.py"], rows, TOP, isdir, listdir), [])
+
+
+class TrimOutputTests(unittest.TestCase):
+    def test_keeps_last_n_non_blank_lines(self):
+        self.assertEqual(guards.trim_output("a\n\nb\n  \nc\nd\n", n=2), "c\nd")
+
+
+class RunBuildTests(unittest.TestCase):
+    def test_tool_not_on_path_gives_none(self):
+        with mock.patch("guards.shutil.which", return_value=None):
+            result = guards.run_build(TOP, ["tool", "build"])
+
+        self.assertEqual(result, (None, "tool not found on PATH"))
+
+    def test_timeout_gives_none(self):
+        with mock.patch("guards.shutil.which", return_value="tool"), \
+                mock.patch("guards.subprocess.run", side_effect=guards.subprocess.TimeoutExpired("tool", 840)):
+            result = guards.run_build(TOP, ["tool", "build"])
+
+        self.assertEqual(result, (None, "timed out after 840s"))
+
+
+class RunBuildGateTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        for name in ("setup.cfg", "a.py"):
+            open(os.path.join(self.tmp.name, name), "w").close()
+        self.root = os.path.normpath(self.tmp.name)
+        self.git_replies = [(self.tmp.name + "\n").encode(), b"origin/main\n", b"abc\n", b"a.py\n"]
+
+    def payload(self, command):
+        return {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": self.tmp.name}
+
+    def run_gate(self, returncode=0, which="tool"):
+        stderr = io.StringIO()
+        build = subprocess_result(returncode, b"", b"a.py:1: error\n")
+        with mock.patch.object(guards, "_git", side_effect=self.git_replies), \
+                mock.patch("guards.shutil.which", return_value=which), \
+                mock.patch("guards.subprocess.run", return_value=build), \
+                contextlib.redirect_stderr(stderr):
+            code = guards.run_build_gate(self.payload("git push"), build_gate_cfg())
+        return code, stderr.getvalue()
+
+    def test_disabled_returns_0_without_calling_git(self):
+        with mock.patch.object(guards, "_git") as git:
+            code = guards.run_build_gate(self.payload("git push"), build_gate_cfg(enabled=False))
+
+        self.assertEqual(code, 0)
+        git.assert_not_called()
+
+    def test_empty_builds_returns_0_without_calling_git(self):
+        with mock.patch.object(guards, "_git") as git:
+            code = guards.run_build_gate(self.payload("git push"), build_gate_cfg(builds=()))
+
+        self.assertEqual(code, 0)
+        git.assert_not_called()
+
+    def test_non_push_command_returns_0_without_calling_git(self):
+        with mock.patch.object(guards, "_git") as git:
+            code = guards.run_build_gate(self.payload("git status"), build_gate_cfg())
+
+        self.assertEqual(code, 0)
+        git.assert_not_called()
+
+    def test_no_upstream_and_no_origin_head_returns_0(self):
+        with mock.patch.object(guards, "_git", side_effect=[self.git_replies[0], None, None]):
+            code = guards.run_build_gate(self.payload("git push"), build_gate_cfg())
+
+        self.assertEqual(code, 0)
+
+    def test_failing_build_returns_2_with_header_on_stderr(self):
+        code, stderr = self.run_gate(returncode=1)
+
+        self.assertEqual(code, 2)
+        self.assertEqual(
+            stderr,
+            f"Build failed in {self.root} (tool build). Fix these errors before pushing:\na.py:1: error\n",
+        )
+
+    def test_passing_build_returns_0(self):
+        code, stderr = self.run_gate(returncode=0)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+
+    def test_missing_tool_returns_0_with_skipped_line(self):
+        code, stderr = self.run_gate(which=None)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, f"guards.py: build gate skipped {self.root}: tool not found on PATH\n")
+
+
+def subprocess_result(returncode, stdout, stderr):
+    return guards.subprocess.CompletedProcess(["tool"], returncode, stdout, stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

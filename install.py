@@ -45,6 +45,7 @@ REFRESH_INTERVAL_S = 30
 GUARD_HOOKS = (
     ("PostToolUse", "Edit|Write", "--line-endings", 10),
     ("PreToolUse", "Bash|PowerShell", "--posted-text", 10),
+    ("PreToolUse", "Bash|PowerShell", "--build-gate", 900),
 )
 
 
