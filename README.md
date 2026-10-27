@@ -10,7 +10,7 @@ A two-line ANSI status bar for [Claude Code](https://claude.ai/code), showing co
 
 **Line 1** — Model name (bold) + color-coded context bar + percentage and token counts + optional cost estimate (yellow from $10, red from $30) + session duration (e.g. `1h4m`) + `retro ✓` once the session retro has fired + `handoff ✓` once the session handoff has fired.
 
-**Line 2** — Folder name + git branch + a dirty marker (`*`) when anything is uncommitted, untracked files included + `+N/-N` line counts covering both staged and unstaged changes.
+**Line 2** — Folder name + git branch + a dirty marker (`*`) when anything is uncommitted, untracked files included + `+N/-N` line counts covering both staged and unstaged changes + plan rate limits + the prompt cache group (e.g. `cache 92% warm 3m`).
 
 Bar colors: green ≤ 60%, yellow ≤ 80%, red > 80% (thresholds configurable).
 
@@ -105,7 +105,8 @@ Copy `config.example.json` to `~/.claude/ccbar.config.json` (the installer does 
   "handoff": true,
   "effort": true,
   "worktree": true,
-  "rate_limits": true
+  "rate_limits": true,
+  "prompt_cache": true
 }
 ```
 
@@ -143,7 +144,9 @@ Valid values: `reset`, `bold`, `black`, `red`, `green`, `yellow`, `blue`, `magen
   "deletions": "red",
   "retro": "magenta",
   "handoff": "blue",
-  "worktree": "cyan"
+  "worktree": "cyan",
+  "cache_warm": "green",
+  "cache_cold": "yellow"
 }
 ```
 
@@ -204,6 +207,10 @@ Set `"ascii_fallback": true` to suppress any glyph icons and use plain labels on
 ```
 
 Line 2 shows plan usage for the 5-hour and 7-day windows, colored by `bar.thresholds`, e.g. `5h 23% (2h10m)  7d 41%`. `show_reset` adds the time left until each window resets. Claude Code only sends rate limits for Pro/Max plans, after the first response in a session. Toggle with `segments.rate_limits`.
+
+### Prompt cache
+
+After the rate limits, line 2 shows the prompt cache, e.g. `cache 92% warm 3m` or `cache 92% cold`: the cache hit ratio, whether the cached prefix is still warm (`colors.cache_warm`) or has gone cold (`colors.cache_cold`), and the time left before a warm cache expires. It appears after the first response, needs Claude Code v2.1.251+, and counts only the main conversation, not subagents. Nothing shows when caching isn't observed. Toggle with `segments.prompt_cache`.
 
 ---
 

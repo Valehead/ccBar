@@ -607,6 +607,23 @@ class RenderTests(unittest.TestCase):
 
         self.assertEqual(line2, "5h 23%")
 
+    def test_rate_limits_then_prompt_cache_groups(self):
+        extra = {
+            "rate_limits": {"five_hour": {"used_percentage": 23}},
+            "prompt_cache": {"caching_observed": True, "warm": True, "hit_ratio": 0.92, "expires_at": NOW + 180},
+        }
+
+        line2 = self._render_with(extra)[1]
+
+        self.assertEqual(line2, "📁 repo | 5h 23% | cache 92% warm 3m")
+
+    def test_line2_without_folder_starts_with_prompt_cache(self):
+        extra = {"workspace": {"current_dir": ""}, "prompt_cache": {"warm": False, "hit_ratio": 0.92}}
+
+        line2 = self._render_with(extra)[1]
+
+        self.assertEqual(line2, "cache 92% cold")
+
     def test_malformed_new_fields_render_nothing(self):
         extra = {"rate_limits": "garbage", "effort": 5, "worktree": "x"}
 
@@ -662,6 +679,47 @@ class RenderTests(unittest.TestCase):
         line1 = self._render_with({"cost": {"total_cost_usd": 12.5}}, {"no_color": False})[0]
 
         self.assertIn("\x1b[33m$12.5000\x1b[0m", line1)
+
+
+class PromptCacheTextTests(unittest.TestCase):
+    def _text(self, cache, now=NOW):
+        return ccbar._prompt_cache_text({"prompt_cache": cache}, {}, now, lambda text, color: text)
+
+    def test_warm_with_ratio_and_countdown(self):
+        cache = {"caching_observed": True, "warm": True, "hit_ratio": 0.92, "expires_at": NOW + 180}
+
+        self.assertEqual(self._text(cache), "cache 92% warm 3m")
+
+    def test_warm_past_expiry_drops_countdown(self):
+        cache = {"caching_observed": True, "warm": True, "hit_ratio": 0.92, "expires_at": NOW - 1}
+
+        self.assertEqual(self._text(cache), "cache 92% warm")
+
+    def test_warm_without_now_drops_countdown(self):
+        cache = {"caching_observed": True, "warm": True, "hit_ratio": 0.92, "expires_at": NOW + 180}
+
+        self.assertEqual(self._text(cache, now=None), "cache 92% warm")
+
+    def test_cold(self):
+        cache = {"caching_observed": True, "warm": False, "hit_ratio": 0.92, "expires_at": None}
+
+        self.assertEqual(self._text(cache), "cache 92% cold")
+
+    def test_null_hit_ratio_drops_percentage(self):
+        cache = {"caching_observed": True, "warm": True, "hit_ratio": None, "expires_at": NOW + 180}
+
+        self.assertEqual(self._text(cache), "cache warm 3m")
+
+    def test_caching_not_observed_renders_nothing(self):
+        cache = {"caching_observed": False, "warm": True, "hit_ratio": 0.92}
+
+        self.assertEqual(self._text(cache), "")
+
+    def test_absent_renders_nothing(self):
+        self.assertEqual(ccbar._prompt_cache_text({}, {}, NOW, lambda text, color: text), "")
+
+    def test_malformed_renders_nothing(self):
+        self.assertEqual(self._text("garbage"), "")
 
 
 class FmtDurationTests(unittest.TestCase):
