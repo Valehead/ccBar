@@ -206,7 +206,7 @@ Set `"ascii_fallback": true` to suppress any glyph icons and use plain labels on
 }
 ```
 
-Line 2 shows plan usage for the 5-hour and 7-day windows, colored by `bar.thresholds`, e.g. `5h 23% (2h10m)  7d 41%`. `show_reset` adds the time left until each window resets. Claude Code only sends rate limits for Pro/Max plans, after the first response in a session. Toggle with `segments.rate_limits`.
+Line 2 shows plan usage for the 5-hour window, colored by `bar.thresholds`, e.g. `5h 23% (2h10m)`. The 7-day window is left off to save space. `show_reset` adds the time left until the window resets. Claude Code only sends rate limits for Pro/Max plans, after the first response in a session. Toggle with `segments.rate_limits`.
 
 ### Prompt cache
 

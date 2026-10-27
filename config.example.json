@@ -97,7 +97,7 @@
   },
 
   "rate_limits": {
-    "_comment": "show_reset: show time left until each 5h/7d window resets. Rate limits appear only for Pro/Max plans, after the first response.",
+    "_comment": "show_reset: show time left until the 5h window resets. Rate limits appear only for Pro/Max plans, after the first response.",
     "show_reset": true
   },
 

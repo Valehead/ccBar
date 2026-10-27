@@ -96,7 +96,7 @@ DEFAULTS = {
     },
 }
 
-RATE_WINDOWS = (("5h", "five_hour"), ("7d", "seven_day"))
+RATE_WINDOWS = (("5h", "five_hour"),)
 
 # ---------------------------------------------------------------------------
 # ANSI helpers

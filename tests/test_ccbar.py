@@ -557,12 +557,12 @@ class RenderTests(unittest.TestCase):
 
         self.assertTrue(line2.endswith("wt wt-a"))
 
-    def test_rate_limits_both_windows_with_countdown_on_5h(self):
+    def test_rate_limits_shows_5h_with_countdown_and_ignores_7d(self):
         limits = {"five_hour": {"used_percentage": 23, "resets_at": NOW + 7800}, "seven_day": {"used_percentage": 41}}
 
         line2 = self._render_with({"rate_limits": limits})[1]
 
-        self.assertEqual(line2, "📁 repo | 5h 23% (2h10m)  7d 41%")
+        self.assertEqual(line2, "📁 repo | 5h 23% (2h10m)")
 
     def test_rate_limits_without_seven_day_renders_5h_only(self):
         line2 = self._render_with({"rate_limits": {"five_hour": {"used_percentage": 23}}})[1]
@@ -583,12 +583,12 @@ class RenderTests(unittest.TestCase):
 
         self.assertEqual(line2, "📁 repo | 5h 23%")
 
-    def test_rate_limits_non_numeric_percentage_skips_window(self):
+    def test_rate_limits_non_numeric_percentage_renders_nothing(self):
         limits = {"five_hour": {"used_percentage": "23"}, "seven_day": {"used_percentage": 41}}
 
         line2 = self._render_with({"rate_limits": limits})[1]
 
-        self.assertEqual(line2, "📁 repo | 7d 41%")
+        self.assertEqual(line2, "📁 repo")
 
     def test_no_rate_limits_leaves_line2_unchanged(self):
         line2 = self._render_with({})[1]
