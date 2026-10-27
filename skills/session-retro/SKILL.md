@@ -62,4 +62,4 @@ Do NOT write any memory or CLAUDE.md change until the user approves it by number
 
 After reporting, stop. Don't resume the prior task until the user says so.
 
-Write in the user's style: terse, no em dashes.
+Write in the user's style, following any writing rules in their CLAUDE.md files or memory.

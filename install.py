@@ -215,6 +215,13 @@ def apply_guards(settings, py_cmd, script_dir, guards):
     return actions
 
 
+def next_steps(dest_config, guards_registered, py_display):
+    lines = ["Optional next steps:", f"  Customize:  {dest_config}"]
+    if not guards_registered:
+        lines.append(f"  Guard hooks (line endings, posted text, build gate): {py_display} install.py --guards")
+    return lines
+
+
 def install(dry_run=False, no_verify=False, reset_config=False, in_place=False, guards=None):
     print("=== ccBar installer ===\n")
 
@@ -306,6 +313,10 @@ def install(dry_run=False, no_verify=False, reset_config=False, in_place=False, 
             print("  Self-test passed.")
 
     print("\nDone. Restart Claude Code to activate the status line.")
+    if not dry_run:
+        print()
+        for line in next_steps(DEST_CONFIG, has_guard_hooks(settings), py_display):
+            print(line)
 
 
 def uninstall(dry_run=False):

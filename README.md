@@ -1,93 +1,220 @@
 # ccBar
 
-A two-line ANSI status bar for [Claude Code](https://claude.ai/code), showing context window usage, model name, cost (optional), and live git status.
+A two-line status line for [Claude Code](https://claude.ai/code): model, context usage, cost, session time, git state, plan usage and prompt cache at a glance. It also ships optional session hooks that run a retro and write a handoff plan as a long session fills its context, and optional guard hooks that catch line-ending, posted-text and build mistakes before they land.
 
-**Zero token cost.** ccBar runs entirely as a local subprocess. Claude never sees its input or output, so it adds no API cost and no context usage.
+```
+[Claude Opus 4.8 · high]  ████████░░░░░░░░░░░░  41.2% (412,000 / 1,000,000) | $1.2345 | 1h4m | retro ✓
+📁 ccBar  🌿 main*  +12/-3  ⎇ feat-x | 5h 23% (2h10m) | cache 92% warm 3m
+```
 
----
-
-## What it shows
-
-**Line 1** — Model name (bold) + color-coded context bar + percentage and token counts + optional cost estimate (yellow from $10, red from $30) + session duration (e.g. `1h4m`) + `retro ✓` once the session retro has fired + `handoff ✓` once the session handoff has fired.
-
-**Line 2** — Folder name + git branch + a dirty marker (`*`) when anything is uncommitted, untracked files included + `+N/-N` line counts covering both staged and unstaged changes + plan rate limits + the prompt cache group (e.g. `cache 92% warm 3m`).
-
-Bar colors: green ≤ 60%, yellow ≤ 80%, red > 80% (thresholds configurable).
+**Zero token cost.** ccBar runs as a local subprocess. Claude never sees its input or output, so the status line adds no API cost and no context usage.
 
 ---
 
 ## Requirements
 
 - Python 3.8+ (standard library only, no pip packages)
-- Claude Code CLI
+- git, for the git segments
+- Claude Code. The prompt cache group needs v2.1.251 or later; older versions simply don't show it.
 
 ---
 
 ## Install
 
 ```sh
+git clone https://github.com/Valehead/ccBar.git
 cd ccBar
 python install.py
 ```
 
-The installer is safe to re-run after any update — just `git pull` and run it again.
+On Windows, `py -3 install.py` works too. Restart Claude Code afterwards.
 
-What it does each time:
+The installer:
 
-1. Detects the correct Python invocation (prefers the Windows `py` launcher so a missing `python` on PATH never silently breaks the bar).
-2. Always copies the latest `ccbar.py` to `~/.claude/ccbar.py` (picks up script changes), unless installed in place (see below).
-3. Copies every skill under `skills/` into `~/.claude/skills/`.
-4. Copies `config.example.json` to `~/.claude/ccbar.config.json` on first install only — your config is preserved on re-runs so customizations are never lost.
-5. Always updates the `statusLine` key in `~/.claude/settings.json`, preserving all other keys and backing the file up to `settings.json.bak` first (picks up command or format changes). It sets `refreshInterval` to 30 seconds so the rate limit reset countdowns tick between events.
-6. Runs a self-test to confirm the renderer works.
+1. Finds a working Python 3 (preferring the Windows `py` launcher) and writes its command into the status line, so a missing `python` on PATH doesn't break the bar.
+2. Copies `ccbar.py` to `~/.claude/ccbar.py`.
+3. Copies the `session-retro` and `session-handoff` skills into `~/.claude/skills/`.
+4. Copies `config.example.json` to `~/.claude/ccbar.config.json` if you don't have a config yet. An existing config is left alone.
+5. Backs up `~/.claude/settings.json` to `settings.json.bak`, then sets `statusLine` and registers ccBar's Stop hook, keeping every other key. `statusLine.refreshInterval` is set to 30 seconds, so the bar redraws while Claude is idle and countdowns keep ticking.
+6. Runs the self-test.
+7. Prints the config path and, if guard hooks aren't registered, the command to add them.
 
-Restart Claude Code after installing or updating.
+### Locked-down machines
 
-### In-place install
-
-If your machine blocks scripts under `~/.claude`, use `--in-place`:
+If your machine blocks running scripts from `~/.claude`, install in place:
 
 ```sh
 python install.py --in-place
 ```
 
-The status line and Stop hook then run `ccbar.py` straight from the clone, so keep the clone where it is. Config and state still live in `~/.claude`. The mode is sticky: a later plain `python install.py` stays in place. Pass `--copy` to switch back. If an old `~/.claude/ccbar.py` is left over, the installer offers to remove it.
+The status line and Stop hook then run `ccbar.py` from the clone, so keep the clone where it is. Config, state and skills still live in `~/.claude`. If a copied `~/.claude/ccbar.py` is left over, the installer offers to remove it. Re-running the installer keeps whichever mode you picked; pass `--copy` to switch back.
 
-### Updating
-
-```sh
-git pull
-python install.py
-```
-
-### Options
+### Installer options
 
 | Flag | Effect |
 |------|--------|
 | `--in-place` | Run `ccbar.py` from the clone instead of copying it to `~/.claude` |
-| `--copy` | Copy `ccbar.py` to `~/.claude` (the default; switches back from `--in-place`) |
-| `--dry-run` | Print what would change; write nothing |
-| `--no-verify` | Skip self-test |
-| `--reset-config` | Overwrite your config with the latest example (backs up existing first) |
-| `--guards` | Register the [guard hooks](#guards) |
+| `--copy` | Copy `ccbar.py` to `~/.claude` (the default mode) |
+| `--guards` | Register the [guard hooks](#optional-guard-hooks) |
 | `--no-guards` | Remove the guard hooks |
-| `--uninstall` | Remove `statusLine`, the Stop hook, and guard hooks from settings, optionally restore backup and remove files |
+| `--reset-config` | Replace your config with `config.example.json`, backing yours up to `ccbar.config.json.bak` first |
+| `--dry-run` | Print what would change; write nothing |
+| `--no-verify` | Skip the self-test |
+| `--uninstall` | Remove ccBar from `settings.json` and offer to remove its files (see [Uninstall](#uninstall)) |
 
 ---
 
-## Uninstall
+## What you get by default
+
+### The status line
+
+Segments with nothing to show are left out.
+
+**Line 1**
+
+| Segment | Example | Switch off with |
+|---------|---------|-----------------|
+| Model | `[Claude Opus 4.8]` | `segments.model` |
+| Effort level, inside the model bracket when Claude Code reports one | `· high` | `segments.effort` |
+| Context bar: green up to 60%, yellow up to 80%, red above | `████████░░░░` | `segments.context_bar` |
+| Context used, as a percentage and in tokens | `41.2% (412,000 / 1,000,000)` | `segments.context_pct` |
+| Session cost, an estimate from Claude Code, not your bill. Turns yellow from $10, red from $30 | `$1.2345` | `segments.cost` |
+| Session duration | `1h4m` | `segments.duration` |
+| Retro marker, once the session retro has fired | `retro ✓` | `segments.retro` |
+| Handoff marker, once the session handoff has fired | `handoff ✓` | `segments.handoff` |
+
+**Line 2**
+
+| Segment | Example | Switch off with |
+|---------|---------|-----------------|
+| Folder | `📁 ccBar` | always shown (`icons.folder: ""` drops the icon) |
+| Git branch | `🌿 main` | `segments.git_branch` |
+| Dirty marker: anything uncommitted, untracked files included | `*` | `segments.git_dirty` |
+| Lines added and removed in tracked files compared with the last commit, staged and unstaged together | `+12/-3` | `segments.git_changes` |
+| Worktree name, when Claude Code reports the session is in a git worktree | `⎇ feat-x` | `segments.worktree` |
+| Plan usage for the 5-hour window, with time until it resets. Colored by the context bar thresholds. Claude Code sends this only on Pro and Max plans, after the first response | `5h 23% (2h10m)` | `segments.rate_limits` |
+| Prompt cache: hit ratio, warm (green, with time left before it expires) or cold (yellow). Appears after the first response and counts only the main conversation, not subagents | `cache 92% warm 3m` | `segments.prompt_cache` |
+
+Every switch is a boolean under `segments` in your [config](#configuration).
+
+### Session retro and handoff
+
+Both are on by default. The status line watches context usage; the Stop hook the installer registers acts on it at the end of Claude's next response.
+
+| | Session retro | Session handoff |
+|---|---|---|
+| Fires | Once per session, at 400,000 tokens or 70% of the model's context window, whichever comes first | Once per session, at 600,000 tokens or 85% of the window, whichever comes first |
+| What Claude does | Runs the `session-retro` skill: reviews the session for what went wrong, what could have been done better, and what to improve next time | Runs the `session-handoff` skill: writes a self-contained plan so a fresh session can pick up the work |
+| Writes | `~/.claude/retros/<date>-<folder>-<session>.md`, plus numbered memory or CLAUDE.md proposals that are applied only when you approve them | A plan in `~/.claude/plans/` named after the work, plus one line in chat to paste into a fresh session |
+| Marker | `retro ✓` on line 1 | `handoff ✓` on line 1 |
+| Run by hand | `/session-retro` | `/session-handoff` |
+| Switch off | `"retro": {"enabled": false}` | `"handoff": {"enabled": false}` |
+
+If both thresholds are crossed at once, the retro fires first and the handoff at the end of the following response. Retro lessons target auto-memory or an existing CLAUDE.md; the retro never proposes creating a CLAUDE.md inside a git repo.
+
+![ccBar status line showing the retro marker](docs/images/retro-marker.png)
+
+**Session state.** Each session's state lives in `~/.claude/ccbar-state/<session_id>.json`: which events have crossed and fired, plus the git cache. Concurrent sessions don't interfere. Files older than 7 days are pruned. Any of them is safe to delete: deleting a session's file re-arms its retro and handoff, so they fire again on the next response while context is still over the threshold.
+
+---
+
+## Optional: guard hooks
+
+Guards are hooks that catch mistakes Claude makes while editing and posting. They are off until you register them:
 
 ```sh
-python install.py --uninstall
+python install.py --guards
 ```
 
-Guard hooks are removed along with the status line and Stop hook.
+`python install.py --no-guards` removes them. A plain re-run keeps whatever is registered. Guards run `guards.py` from the clone in both install modes, so keep the clone where it is.
+
+All three guards are registered together. Each one can be switched off on its own with `guards.<name>.enabled: false` (see [Guards config](#guards)), and two of them do nothing until you configure them.
+
+### Line endings
+
+**Use this if** you work in repos where git converts line endings (`core.autocrlf`, `.gitattributes`), which is common on Windows.
+**Skip this if** your setup is LF everywhere.
+
+After every Edit or Write, the guard checks that the file still has the line endings git checks it out with. If Claude wrote LF lines into a CRLF file (or the reverse), Claude is told to convert them back.
+
+Details:
+- Compares the file with `git cat-file --filters HEAD:<path>`, which applies `core.autocrlf` and `.gitattributes` exactly as a checkout would.
+- Skips files outside a repo, untracked files, and files with no clear style in git.
+- Blocks by exiting 2, which shows Claude the message.
+
+### Posted text
+
+**Use this if** there is text you never want in PR, issue or review text that Claude posts with `gh` or `az`.
+**Skip this if** you don't have any such rule.
+
+Does nothing until you fill `guards.posted_text.banned`. For example, to ban the em dash:
+
+```json
+"guards": {
+  "posted_text": {
+    "banned": ["—"]
+  }
+}
+```
+
+Before a posting command runs, the guard checks the command and any body file it references. On a hit, the command is blocked and Claude is told to rewrite the text.
+
+Details:
+- Entries are literal substrings, not patterns.
+- Posting commands: `gh pr` and `gh issue` `create`, `edit`, `comment` and `review`; `gh api` calls to a `reviews` or `comments` endpoint; `az repos pr create|update`; `az boards work-item create|update`; and `az devops invoke` when `--resource` names threads or comments.
+- Body files: `--body-file`, `-F`, `--input`, `--in-file`, `key=@file` and `@file`.
+- Runs before every Bash and PowerShell command (Claude on Windows can post through either). Any other command costs one regex search.
+
+### Build gate
+
+**Use this if** you have a compiled or type-checked project and want a push blocked when the build is broken.
+**Skip this if** your projects have no build step, or CI catching it is enough.
+
+Does nothing until you add rows to `guards.build_gate.builds`. A row is:
+
+```json
+{"glob": "*.cs", "root_marker": "*.sln", "command": ["dotnet", "build", "-v", "q", "-clp:ErrorsOnly"]}
+```
+
+Before `git push` or `gh pr create`, the guard finds the files your unpushed commits change. Each file that matches a row's `glob` walks up from its directory to the repo root, and the first directory holding something that matches `root_marker` is its project root. The row's `command` runs there. If it fails, the push is blocked and Claude gets the last 40 lines of output and is told to fix the errors first.
+
+Examples for several stacks. Keep only the rows for stacks you use:
+
+```json
+"guards": {
+  "build_gate": {
+    "builds": [
+      {"glob": "*.cs", "root_marker": "*.sln", "command": ["dotnet", "build", "-v", "q", "-clp:ErrorsOnly"]},
+      {"glob": "*.ts", "root_marker": "package.json", "command": ["npm", "run", "build"]},
+      {"glob": "*.rs", "root_marker": "Cargo.toml", "command": ["cargo", "build", "--quiet"]},
+      {"glob": "*.go", "root_marker": "go.mod", "command": ["go", "build", "./..."]}
+    ]
+  }
+}
+```
+
+The TypeScript row assumes your `package.json` has a `build` script. Plain `dotnet build` restores packages as needed.
+
+Details:
+- `glob` and `root_marker` are `fnmatch` patterns matched against repo-relative paths, where `*` crosses `/`, so `*.cs` matches `src/a/b.cs`.
+- `command` is an argument list, not a shell string.
+- Unpushed commits are compared with the branch's upstream, or `origin/HEAD` when there is none. The build itself runs against the working tree.
+- The repo is the command's working directory, or the `<dir>` of a leading `cd <dir> &&` or of `git -C <dir> push`.
+- Each project root builds once per push, with a timeout of 840 seconds.
+- Fails open: a build tool that isn't on PATH, a timeout, or a git failure lets the push through with one warning line.
+- Any command that isn't a push costs one regex search.
 
 ---
 
 ## Configuration
 
-Copy `config.example.json` to `~/.claude/ccbar.config.json` (the installer does this automatically). All keys are optional; missing keys fall back to built-in defaults.
+ccBar reads `~/.claude/ccbar.config.json`. The installer creates it from `config.example.json` on first install.
+
+- Every key is optional. A missing key uses its default, so you only need the keys you change.
+- A list you set replaces the default list rather than adding to it.
+- Unknown keys are ignored.
+
+The blocks below show the defaults.
 
 ### Segments
 
@@ -96,7 +223,7 @@ Copy `config.example.json` to `~/.claude/ccbar.config.json` (the installer does 
   "model": true,
   "context_bar": true,
   "context_pct": true,
-  "cost": false,
+  "cost": true,
   "duration": true,
   "git_branch": true,
   "git_dirty": true,
@@ -110,7 +237,9 @@ Copy `config.example.json` to `~/.claude/ccbar.config.json` (the installer does 
 }
 ```
 
-### Bar appearance
+See [The status line](#the-status-line) for what each one shows. `retro` and `handoff` hide only the markers; to stop the events, use `retro.enabled` and `handoff.enabled`.
+
+### Bar
 
 ```json
 "bar": {
@@ -121,13 +250,10 @@ Copy `config.example.json` to `~/.claude/ccbar.config.json` (the installer does 
 }
 ```
 
-Switch to ASCII: set `"filled_char": "#"` and `"empty_char": "-"`.
+- `thresholds`: context percentages. Green up to `green`, yellow up to `yellow`, red above. Rate limits use the same thresholds.
+- For plain ASCII, set `"filled_char": "#"` and `"empty_char": "-"`.
 
 ### Colors
-
-Valid values: `reset`, `bold`, `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, `gray`.
-
-`bar_empty` colors the unfilled cells; `null` (the default) uses the fill color; `gray` is a good dim choice.
 
 ```json
 "colors": {
@@ -147,24 +273,29 @@ Valid values: `reset`, `bold`, `black`, `red`, `green`, `yellow`, `blue`, `magen
   "worktree": "cyan",
   "cache_warm": "green",
   "cache_cold": "yellow"
-}
+},
+"no_color": false
 ```
 
-Set `"no_color": true` to strip all ANSI codes.
+- Valid values: `reset`, `bold`, `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, `gray`.
+- `bar_green`, `bar_yellow`, `bar_red`: the context bar and percentage, and the rate limits.
+- `bar_empty`: the unfilled bar cells. `null` uses the fill color; `gray` is a good dim choice.
+- `cache_warm`, `cache_cold`: the prompt cache group.
+- `no_color: true` strips all ANSI codes.
 
 ### Cost
 
 ```json
 "cost": {
-  "show": false,
+  "show": true,
   "decimals": 4,
   "thresholds": { "yellow": 10.0, "red": 30.0 }
 }
 ```
 
-The cost figure is an **estimate** taken from Claude Code's own tracking. It is not your billed charge.
-
-`thresholds` are in USD. Below `yellow` the cost uses `colors.cost`; from `yellow` it uses `colors.bar_yellow`, and from `red` `colors.bar_red`.
+- The figure is Claude Code's own estimate, not your billed charge.
+- `show: false` hides it, the same as `segments.cost: false`.
+- `thresholds` are in USD. Below `yellow` the cost uses `colors.cost`, from `yellow` it uses `colors.bar_yellow`, and from `red` `colors.bar_red`.
 
 ### Git
 
@@ -176,11 +307,11 @@ The cost figure is an **estimate** taken from Claude Code's own tracking. It is 
 }
 ```
 
-- `timeout_ms`: cap on each git call, in milliseconds. A call that runs longer is dropped and its part of line 2 (branch or line counts) is left out.
-- `cache_ttl_ms`: how long a git result is reused, in milliseconds. ccBar caches branch, line counts and dirty state per session in `~/.claude/ccbar-state/<session>.json` and re-runs git once the TTL passes or the working directory changes. A cache hit runs no git. A commit, checkout or reset clears the marker right away (ccBar watches the timestamp of the repo's HEAD reflog); discarding changes without a commit can leave it up until the TTL passes.
-- `dirty_marker`: text drawn right after the branch (in `colors.dirty`) when `git status --porcelain` reports anything, untracked files included. Toggle with `segments.git_dirty`.
+- `dirty_marker`: text drawn after the branch, in `colors.dirty`, when `git status --porcelain` reports anything, untracked files included.
+- `timeout_ms`: cap on each git call. A slower call is dropped and its part of line 2 is left out instead of holding up the bar.
+- `cache_ttl_ms`: how long a git result is reused. ccBar caches branch, line counts and dirty state in the session's state file and runs git again once the TTL passes or the working directory changes. A commit, checkout or reset clears the dirty marker right away (ccBar watches the repo's HEAD reflog); discarding changes without a commit can leave it up until the TTL passes.
 
-### Icons / glyphs
+### Icons
 
 ```json
 "icons": {
@@ -192,11 +323,10 @@ The cost figure is an **estimate** taken from Claude Code's own tracking. It is 
 }
 ```
 
-Set `"ascii_fallback": true` to suppress any glyph icons and use plain labels only.
-
-`dirty`: glyph used instead of `git.dirty_marker` when set; ignored under `ascii_fallback`.
-
-`worktree`: glyph before the worktree name on line 2; an empty string or `ascii_fallback` shows `wt ` instead.
+- `branch`, `folder`: an empty string drops the icon.
+- `dirty`: a glyph to use instead of `git.dirty_marker`. `null` uses `dirty_marker`.
+- `worktree`: an empty string shows `wt ` instead.
+- `ascii_fallback: true` drops every glyph: no icons, `-` as the effort separator, and `retro done` / `handoff done` as the markers.
 
 ### Rate limits
 
@@ -206,27 +336,9 @@ Set `"ascii_fallback": true` to suppress any glyph icons and use plain labels on
 }
 ```
 
-Line 2 shows plan usage for the 5-hour window, colored by `bar.thresholds`, e.g. `5h 23% (2h10m)`. The 7-day window is left off to save space. `show_reset` adds the time left until the window resets. Claude Code only sends rate limits for Pro/Max plans, after the first response in a session. Toggle with `segments.rate_limits`.
+- `show_reset`: show the time left until the 5-hour window resets.
 
-### Prompt cache
-
-After the rate limits, line 2 shows the prompt cache, e.g. `cache 92% warm 3m` or `cache 92% cold`: the cache hit ratio, whether the cached prefix is still warm (`colors.cache_warm`) or has gone cold (`colors.cache_cold`), and the time left before a warm cache expires. It appears after the first response, needs Claude Code v2.1.251+, and counts only the main conversation, not subagents. Nothing shows when caching isn't observed. Toggle with `segments.prompt_cache`.
-
----
-
-## Session retro
-
-Once per session, when context reaches `threshold_tokens` or `threshold_pct` of the model window (whichever comes first), the next response end triggers the `session-retro` skill. Claude reviews the session for what went wrong, what could have been done better, and what to improve next time.
-
-**How.** The status line writes `~/.claude/ccbar-state/<session_id>.json` at the crossing. The Stop hook (`ccbar.py --stop-hook`, registered by the installer) reads it and injects the instruction once. State is per session, so concurrent sessions don't interfere. State files older than 7 days are pruned.
-
-**Output.** A retro file in `~/.claude/retros/*.md`, plus numbered memory/CLAUDE.md proposals that are only applied on your approval. Lessons target the nearest existing CLAUDE.md; the retro never proposes creating a new one inside a git repo.
-
-**Manual run.** `/session-retro` at any time.
-
-Once the retro has fired, line 1 of the bar shows a `retro ✓` marker:
-
-![ccBar status line showing the retro marker](docs/images/retro-marker.png)
+### Retro
 
 ```json
 "retro": {
@@ -236,19 +348,9 @@ Once the retro has fired, line 1 of the bar shows a `retro ✓` marker:
 }
 ```
 
----
+- The retro fires at `threshold_tokens` or `threshold_pct` of the model's window, whichever comes first.
 
-## Session handoff
-
-Once per session, when context reaches the handoff's `threshold_tokens` or `threshold_pct` (whichever comes first), the next response end triggers the `session-handoff` skill. Claude writes a self-contained plan so a fresh session can pick up the work. If the retro and the handoff cross together, the retro fires first and the handoff at the next response end.
-
-**How.** Same mechanism as the retro: the status line records the crossing in the session's state file and the Stop hook injects the instruction once.
-
-**Output.** A plan in `plans_dir` named after the work, plus one line in chat built from `prompt_template` with `{path}` replaced by the plan's absolute path, ready to paste into a new session.
-
-**Manual run.** `/session-handoff` at any time.
-
-Once the handoff has fired, line 1 of the bar shows a `handoff ✓` marker.
+### Handoff
 
 ```json
 "handoff": {
@@ -260,25 +362,12 @@ Once the handoff has fired, line 1 of the bar shows a `handoff ✓` marker.
 }
 ```
 
----
+- `plans_dir`: where the handoff writes its plan.
+- `prompt_template`: the line printed for you to paste into a fresh session. `{path}` becomes the plan's absolute path.
 
-## Guards
+### Guards
 
-Opt-in hooks that catch mistakes Claude makes while editing. Off until you register them:
-
-```sh
-python install.py --guards
-```
-
-`--no-guards` removes them. A plain `python install.py` keeps whatever is registered and refreshes the commands. Guards always run `guards.py` straight from the clone, in both install modes, so keep the clone where it is.
-
-**Line endings.** After every Edit or Write, `guards.py --line-endings` compares the file with `git cat-file --filters HEAD:<path>`, which applies `core.autocrlf` and `.gitattributes` exactly as a checkout would. If the file now has LF lines where the checkout form is CRLF (or the reverse), the hook exits 2 and Claude is told to convert them back. Files outside a repo, untracked files, and files with no clear style in git are skipped.
-
-**Posted text.** Before every Bash or PowerShell command (the hook matcher is `Bash|PowerShell`, since Claude on Windows posts through either tool), `guards.py --posted-text` checks commands that post text other people read: `gh pr` and `gh issue` `create`, `edit`, `comment`, and `review`; `gh api` calls to a `reviews` or `comments` endpoint; `az repos pr create|update`; `az boards work-item create|update`; and `az devops invoke` when `--resource` names threads or comments. If the command, or a body file it references (`--body-file`, `-F`, `--input`, `--in-file`, `key=@file`, `@file`), contains an entry from `banned`, the hook exits 2 and Claude is told to rewrite the text. Entries are literal substrings, not patterns. The default bans the em dash (U+2014). A `banned` list in your config replaces the default rather than adding to it, so include the em dash if you still want it. Every other command costs one regex search.
-
-**Build gate.** Before every `git push` (including `git -C <dir> push`) or `gh pr create`, `guards.py --build-gate` builds the code the push is about to send. The repo is the payload's `cwd`, or the `<dir>` of a leading `cd <dir> &&` or of `git -C <dir>`. It lists the files changed by unpushed commits, compared with the branch's upstream, or `origin/HEAD` when there is none, and maps each one through the `builds` table. A row is `{"glob": ..., "root_marker": ..., "command": [...]}`. A file matching `glob` walks up from its directory to the repo root, and the first directory holding an entry that matches `root_marker` is its project root. Both are `fnmatch` patterns matched against repo-relative paths, where `*` crosses `/`, so `*.cs` matches `src/a/b.cs`. `command` is an argument list, not a shell string, and runs in the root. Each root builds once per push, with a timeout of 840 seconds. The build runs against the working tree. If a build fails, the hook exits 2 with the last 40 lines of its output and Claude is told to fix the errors before pushing. A build tool that isn't on PATH, a timeout, or a git failure lets the push through with one warning line. The table is empty by default, which turns the gate off. Every other command costs one regex search.
-
-Switch a guard off, or change the banned list, without reinstalling:
+These keys take effect only after `install.py --guards`.
 
 ```json
 "guards": {
@@ -287,7 +376,7 @@ Switch a guard off, or change the banned list, without reinstalling:
   },
   "posted_text": {
     "enabled": true,
-    "banned": ["—"]
+    "banned": []
   },
   "build_gate": {
     "enabled": true,
@@ -296,46 +385,71 @@ Switch a guard off, or change the banned list, without reinstalling:
 }
 ```
 
-A .NET example that builds the nearest solution when C# files change. Plain `dotnet build` restores packages as needed:
-
-```json
-"build_gate": {
-  "enabled": true,
-  "builds": [
-    {"glob": "*.cs", "root_marker": "*.sln", "command": ["dotnet", "build", "-v", "q", "-clp:ErrorsOnly"]}
-  ]
-}
-```
+- `enabled: false` switches one guard off without reinstalling.
+- `banned`: literal substrings to block in posted text. Empty does nothing. See [Posted text](#posted-text).
+- `builds`: build gate rows. Empty does nothing. See [Build gate](#build-gate).
 
 ---
 
-## Self-test
+## Updating
 
 ```sh
-python ccbar.py --selftest
-# or after install:
-python ~/.claude/ccbar.py --selftest
+git pull
+python install.py
 ```
 
-Feeds two mock payloads (200k and 1M context windows) through the renderer and prints the result.
+Re-running the installer keeps your install mode, your config and your guard hooks, and refreshes everything else. Skills are copied, not linked, so re-running is also what updates them, in both modes. Restart Claude Code afterwards.
 
-Unit tests:
+### Upgrading from an older ccBar
+
+These keys no longer do anything. Unknown keys are ignored, so leaving them is harmless, but you can delete them:
+
+- `git.line_counts`
+- `git.cache` (replaced by `git.cache_ttl_ms`)
+- `icons.staged`, `icons.unstaged`
+- `colors.changes` (split into `colors.insertions` and `colors.deletions`)
+- `colors.context_text`
+- `segments.session_name`, `colors.session_name`
+
+---
+
+## Uninstall
 
 ```sh
-py -3 -m unittest discover -s tests
+python install.py --uninstall
 ```
+
+Removes `statusLine`, the Stop hook and the guard hooks from `settings.json`, then asks before each further step: restoring `settings.json` from `settings.json.bak`, and removing `~/.claude/ccbar.py`, your config, the installed skills and the session state. Retro files and handoff plans are left in place.
 
 ---
 
 ## Troubleshooting
 
-**Blank status line with no error.** The most common cause is `python` not being on PATH. The installer works around this by recording the absolute interpreter path in `settings.json`. If you installed manually, check that the `statusLine` command in `~/.claude/settings.json` points to a real Python binary.
+**Blank status line with no error.** The most common cause is `python` not being on PATH. The installer works around this by writing a working interpreter command into `settings.json`. If you installed manually, check that the `statusLine` command in `~/.claude/settings.json` points to a real Python.
 
-**Status line shows raw text / garbled characters.** Your terminal may not support UTF-8 block characters. Set `"filled_char": "#"`, `"empty_char": "-"`, and `"ascii_fallback": true` in the config.
+**Status line shows raw text or garbled characters.** Your terminal may not support UTF-8 block characters. Set `"filled_char": "#"`, `"empty_char": "-"` and `"ascii_fallback": true` in the config.
 
-**Git info missing.** Verify `git` is on PATH in the shell Claude Code inherits. On macOS the Xcode Command Line Tools may need to be installed (`xcode-select --install`).
+**Git info missing.** Check that `git` is on PATH in the shell Claude Code inherits. On macOS the Xcode Command Line Tools may need installing (`xcode-select --install`).
 
-**Status line is slow.** Each git call is capped by `git.timeout_ms` (default 800). Lower it if git is slow in a large repo; a call that times out is left off the bar instead of holding it up. Git results are cached for `git.cache_ttl_ms` (default 3000); raise it to run git less often.
+**Status line is slow.** Each git call is capped by `git.timeout_ms` (default 800). Lower it if git is slow in a large repo; a call that times out is left off the bar instead of holding it up. Git results are reused for `git.cache_ttl_ms` (default 3000); raise it to run git less often.
+
+**A guard blocked something it shouldn't.** Switch that guard off with `"enabled": false` under its `guards` key, or remove all guards with `python install.py --no-guards`.
+
+---
+
+## Self-test and tests
+
+```sh
+python ccbar.py --selftest
+```
+
+Feeds two mock payloads (200k and 1M context windows) through the renderer and prints the result. After a copy install, `python ~/.claude/ccbar.py --selftest` tests the installed copy.
+
+Unit tests:
+
+```sh
+python -m unittest discover -s tests
+```
 
 ---
 

@@ -167,6 +167,22 @@ class ApplyGuardsTests(unittest.TestCase):
         )
 
 
+class NextStepsTests(unittest.TestCase):
+    def test_includes_guards_hint_when_no_guards_registered(self):
+        lines = install.next_steps("C:/Users/me/.claude/ccbar.config.json", False, "py -3")
+
+        self.assertEqual(lines, [
+            "Optional next steps:",
+            "  Customize:  C:/Users/me/.claude/ccbar.config.json",
+            "  Guard hooks (line endings, posted text, build gate): py -3 install.py --guards",
+        ])
+
+    def test_omits_guards_hint_when_guards_registered(self):
+        lines = install.next_steps("C:/Users/me/.claude/ccbar.config.json", True, "py -3")
+
+        self.assertEqual(lines, ["Optional next steps:", "  Customize:  C:/Users/me/.claude/ccbar.config.json"])
+
+
 class ResolveModeTests(unittest.TestCase):
     def test_existing_in_place_status_line_keeps_in_place(self):
         self.assertTrue(install.resolve_mode(IN_PLACE_STATUS, CLONE_DIR, []))
