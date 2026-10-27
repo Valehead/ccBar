@@ -595,22 +595,10 @@ class RenderTests(unittest.TestCase):
 
         self.assertEqual(line2, "📁 repo")
 
-    def test_session_name_rendered_last(self):
-        extra = {"session_name": "fix-bar", "rate_limits": {"five_hour": {"used_percentage": 23}}}
+    def test_session_name_is_not_rendered(self):
+        line2 = self._render_with({"session_name": "fix-bar"})[1]
 
-        line2 = self._render_with(extra)[1]
-
-        self.assertEqual(line2, "📁 repo | 5h 23% | « fix-bar »")
-
-    def test_session_name_strips_control_chars_and_ansi(self):
-        line2 = self._render_with({"session_name": "[31mfix-bar"})[1]
-
-        self.assertEqual(line2, "📁 repo | « fix-bar »")
-
-    def test_session_name_truncated_to_max(self):
-        line2 = self._render_with({"session_name": "x" * 50})[1]
-
-        self.assertEqual(line2, "📁 repo | « " + "x" * ccbar.SESSION_NAME_MAX + " »")
+        self.assertEqual(line2, "📁 repo")
 
     def test_line2_without_folder_starts_with_rate_limits(self):
         extra = {"workspace": {"current_dir": ""}, "rate_limits": {"five_hour": {"used_percentage": 23}}}
@@ -620,7 +608,7 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(line2, "5h 23%")
 
     def test_malformed_new_fields_render_nothing(self):
-        extra = {"rate_limits": "garbage", "effort": 5, "session_name": None, "worktree": "x"}
+        extra = {"rate_limits": "garbage", "effort": 5, "worktree": "x"}
 
         lines = self._render_with(extra)
 

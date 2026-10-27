@@ -28,7 +28,6 @@ DEFAULTS = {
         "effort": True,
         "worktree": True,
         "rate_limits": True,
-        "session_name": True,
     },
     "bar": {
         "width": 20,
@@ -49,7 +48,6 @@ DEFAULTS = {
         "retro": "magenta",
         "handoff": "blue",
         "worktree": "cyan",
-        "session_name": "white",
     },
     "no_color": False,
     "cost": {
@@ -91,7 +89,6 @@ DEFAULTS = {
     },
 }
 
-SESSION_NAME_MAX = 40
 RATE_WINDOWS = (("5h", "five_hour"), ("7d", "seven_day"))
 
 # ---------------------------------------------------------------------------
@@ -378,17 +375,9 @@ def render(data, cfg, git_info=None, events=None, now=None):
 
     rate_text = _rate_limits_text(data, cfg, now, c) if segs.get("rate_limits", True) else ""
 
-    session_text = ""
-    session_name = data.get("session_name")
-    if segs.get("session_name", True) and isinstance(session_name, str) and session_name:
-        session_name = _sanitize_label(session_name, SESSION_NAME_MAX)
-        session_label = f'"{session_name}"' if ascii_fallback else f"« {session_name} »"
-        session_text = c(session_label, colors.get("session_name", "white"))
-
     line2 = "  ".join(line2_parts)
-    for group in (rate_text, session_text):
-        if group:
-            line2 = f"{line2} | {group}" if line2 else group
+    if rate_text:
+        line2 = f"{line2} | {rate_text}" if line2 else rate_text
 
     return line1 + "\n" + line2
 
@@ -617,7 +606,6 @@ MOCK_1M = {
         },
     },
     "effort": {"level": "high"},
-    "session_name": "selftest session",
     "rate_limits": {
         "five_hour": {"used_percentage": 23},
         "seven_day": {"used_percentage": 41},

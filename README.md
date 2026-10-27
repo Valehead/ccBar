@@ -104,8 +104,7 @@ Copy `config.example.json` to `~/.claude/ccbar.config.json` (the installer does 
   "handoff": true,
   "effort": true,
   "worktree": true,
-  "rate_limits": true,
-  "session_name": true
+  "rate_limits": true
 }
 ```
 
@@ -139,8 +138,7 @@ Valid values: `reset`, `bold`, `black`, `red`, `green`, `yellow`, `blue`, `magen
   "deletions": "red",
   "retro": "magenta",
   "handoff": "blue",
-  "worktree": "cyan",
-  "session_name": "white"
+  "worktree": "cyan"
 }
 ```
 
