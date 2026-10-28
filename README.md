@@ -2,9 +2,17 @@
 
 A two-line status line for [Claude Code](https://claude.ai/code): model, context usage, cost, git state, plan usage and prompt cache at a glance. It also ships optional session hooks that run a retro and write a handoff plan as a long session fills its context, and optional guard hooks that catch line-ending, posted-text and build mistakes before they land.
 
+![ccBar early in a session](docs/images/statusline-early.png)
+
+Later in a long session, context and cost turn yellow and the retro and handoff markers appear once they fire:
+
+![ccBar late in a long session](docs/images/statusline-late.png)
+
+Every segment, with all the optional markers showing:
+
 ```
-[Claude Opus 4.8 · high]  ████████░░░░░░░░░░░░  41.2% (412k / 1M) | $1.2345 | cache 92% warm 3m | retro ✓
-📁 ccBar ⎇ feat-x | 🌿 main*  +12/-3 | 5h 23% (2h10m)
+[Claude Opus 4.8 · high]  ████████░░░░░░░░░░░░  41.2% (412k / 1M) | $1.2345 | retro ✓
+📁 ccBar ⎇ feat-x | 🌿 main*  +12/-3 | 5h 23% (2h10m) | cache 92% warm 3m
 ```
 
 **Zero token cost.** ccBar runs as a local subprocess. Claude never sees its input or output, so the status line adds no API cost and no context usage.
@@ -79,7 +87,6 @@ Segments with nothing to show are left out.
 | Context bar: green up to 60%, yellow up to 80%, red above | `████████░░░░` | `segments.context_bar` |
 | Context used, as a percentage and in tokens | `41.2% (412k / 1M)` | `segments.context_pct` |
 | Session cost, an estimate from Claude Code, not your bill. Turns yellow from $10, red from $30 | `$1.2345` | `segments.cost` |
-| Prompt cache: hit ratio, warm (green, with time left before it expires) or cold (yellow). Appears after the first response and counts only the main conversation, not subagents | `cache 92% warm 3m` | `segments.prompt_cache` |
 | Retro marker, once the session retro has fired | `retro ✓` | `segments.retro` |
 | Handoff marker, once the session handoff has fired | `handoff ✓` | `segments.handoff` |
 
@@ -93,6 +100,7 @@ Segments with nothing to show are left out.
 | Dirty marker: anything uncommitted, untracked files included | `*` | `segments.git_dirty` |
 | Lines added and removed in tracked files compared with the last commit, staged and unstaged together | `+12/-3` | `segments.git_changes` |
 | Plan usage for the 5-hour window, with time until it resets. Colored by the context bar thresholds. Claude Code sends this only on Pro and Max plans, after the first response | `5h 23% (2h10m)` | `segments.rate_limits` |
+| Prompt cache: hit ratio, warm (green, with time left before it expires) or cold (yellow). Appears after the first response and counts only the main conversation, not subagents | `cache 92% warm 3m` | `segments.prompt_cache` |
 
 Every switch is a boolean under `segments` in your [config](#configuration).
 
@@ -110,8 +118,6 @@ Both are on by default. The status line watches context usage; the Stop hook the
 | Switch off | `"retro": {"enabled": false}` | `"handoff": {"enabled": false}` |
 
 If both thresholds are crossed at once, the retro fires first and the handoff at the end of the following response. Retro lessons target auto-memory or an existing CLAUDE.md; the retro never proposes creating a CLAUDE.md inside a git repo.
-
-![ccBar status line showing the retro marker](docs/images/retro-marker.png)
 
 **Session state.** Each session's state lives in `~/.claude/ccbar-state/<session_id>.json`: which events have crossed and fired, plus the git cache. Concurrent sessions don't interfere. Files older than 7 days are pruned. Any of them is safe to delete: deleting a session's file re-arms its retro and handoff, so they fire again on the next response while context is still over the threshold.
 
