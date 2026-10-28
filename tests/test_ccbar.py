@@ -1,4 +1,4 @@
-import io, json, os, sys, tempfile, unittest
+import io, json, os, sys, tempfile, time, unittest
 from unittest import mock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import ccbar
@@ -191,6 +191,13 @@ class StateIoTests(unittest.TestCase):
 
         self.assertEqual(os.listdir(self._tmp.name), ["fresh.json"])
 
+    def test_prune_with_missing_state_dir_does_nothing(self):
+        ccbar.STATE_DIR = os.path.join(self._tmp.name, "missing")
+
+        ccbar.prune_state()
+
+        self.assertFalse(os.path.exists(ccbar.STATE_DIR))
+
     def test_update_event_state_writes_once_on_crossing(self):
         below = ccbar.update_event_state(_status_payload(100000), CFG)
         state_path = os.path.join(self._tmp.name, "sess-1.json")
@@ -276,6 +283,16 @@ class RunStopHookTests(unittest.TestCase):
 
         self.assertEqual(out, "")
         self.assertFalse(ccbar.load_state(PAYLOAD["session_id"])["events"]["retro"]["fired"])
+
+    def test_prunes_old_state_even_when_nothing_fires(self):
+        ccbar.save_state("old", CROSSED_STATE)
+        old_time = time.time() - 8 * 86400
+        os.utime(os.path.join(self._tmp.name, "old.json"), (old_time, old_time))
+
+        out = self._run(PAYLOAD)
+
+        self.assertEqual(out, "")
+        self.assertFalse(os.path.exists(os.path.join(self._tmp.name, "old.json")))
 
 
 class GitInfoTests(unittest.TestCase):
