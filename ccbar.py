@@ -528,11 +528,17 @@ def update_state(session_id, change):
 
 
 def prune_state(now=None):
+    if not os.path.isdir(STATE_DIR):
+        return
     cutoff = (now or time.time()) - STATE_MAX_AGE_DAYS * 86400
     for name in os.listdir(STATE_DIR):
         path = os.path.join(STATE_DIR, name)
-        if os.path.getmtime(path) < cutoff:
-            os.remove(path)
+        try:
+            if os.path.getmtime(path) < cutoff:
+                os.remove(path)
+        except FileNotFoundError:
+            # Another session's Stop hook pruned it first
+            pass
 
 
 def update_event_state(data, cfg):
@@ -598,6 +604,7 @@ def run_stop_hook():
     session_id = _safe_session_id(payload.get("session_id"))
     if not session_id:
         return
+    prune_state()
     cfg = load_config()
     state = load_state(session_id)
     result = stop_hook_output(payload, state, cfg)
@@ -610,7 +617,6 @@ def run_stop_hook():
 
     # Saved before printing so a crash after the print can't fire the event twice
     update_state(session_id, mark_fired)
-    prune_state()
     print(json.dumps(out))
 
 
