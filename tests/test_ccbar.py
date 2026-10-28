@@ -624,29 +624,45 @@ class RenderTests(unittest.TestCase):
 
         self.assertEqual(line2, "5h 23%")
 
-    def test_rate_limits_then_prompt_cache_groups(self):
-        extra = {
+    def test_prompt_cache_on_line1_between_cost_and_retro(self):
+        data = {
+            "workspace": {"current_dir": "C:/repo"},
+            "model": {"display_name": "Opus 4.8"},
             "rate_limits": {"five_hour": {"used_percentage": 23}},
             "prompt_cache": {"caching_observed": True, "warm": True, "hit_ratio": 0.92, "expires_at": NOW + 180},
         }
 
-        line2 = self._render_with(extra)[1]
+        line1, line2 = ccbar.render(data, {"no_color": True}, events={"retro": {"fired": True}}, now=NOW).splitlines()
 
-        self.assertEqual(line2, "📁 repo | 5h 23% | cache 92% warm 3m")
+        self.assertTrue(line1.endswith("| $0.0000 | cache 92% warm 3m | retro ✓"))
+        self.assertEqual(line2, "📁 repo | 5h 23%")
 
-    def test_line2_without_folder_starts_with_prompt_cache(self):
-        extra = {"workspace": {"current_dir": ""}, "prompt_cache": {"warm": False, "hit_ratio": 0.92}}
+    def test_cold_prompt_cache_ends_line1_and_skips_line2(self):
+        extra = {"rate_limits": {"five_hour": {"used_percentage": 23}}, "prompt_cache": {"warm": False, "hit_ratio": 0.92}}
 
-        line2 = self._render_with(extra)[1]
+        line1, line2 = self._render_with(extra)
 
-        self.assertEqual(line2, "cache 92% cold")
+        self.assertTrue(line1.endswith("| $0.0000 | cache 92% cold"))
+        self.assertEqual(line2, "📁 repo | 5h 23%")
+
+    def test_absent_prompt_cache_leaves_line1_ending_at_cost(self):
+        line1 = self._render_with({"cost": {"total_cost_usd": 0}})[0]
+
+        self.assertEqual(line1, "[Opus 4.8]  " + "░" * 20 + "  0.0% (0 / 200k) | $0.0000")
+
+    def test_prompt_cache_segment_off_hides_it(self):
+        extra = {"prompt_cache": {"caching_observed": True, "warm": True, "hit_ratio": 0.92}}
+
+        line1 = self._render_with(extra, {"segments": {"prompt_cache": False}})[0]
+
+        self.assertTrue(line1.endswith("| $0.0000"))
 
     def test_malformed_new_fields_render_nothing(self):
         extra = {"rate_limits": "garbage", "effort": 5, "worktree": "x"}
 
         lines = self._render_with(extra)
 
-        self.assertEqual(lines, ["[Opus 4.8]  " + "░" * 20 + "  0.0% (0 / 200,000) | $0.0000", "📁 repo"])
+        self.assertEqual(lines, ["[Opus 4.8]  " + "░" * 20 + "  0.0% (0 / 200k) | $0.0000", "📁 repo"])
 
     def test_bar_empty_null_keeps_single_color_bar(self):
         extra = {"context_window": {"total_input_tokens": 100000, "context_window_size": 200000}}
@@ -669,28 +685,6 @@ class RenderTests(unittest.TestCase):
         line1 = self._render_with(extra, {"colors": {"bar_empty": "gray"}})[0]
 
         self.assertNotIn("\x1b", line1)
-
-    def test_duration_rendered_after_cost(self):
-        line1 = self._render_with({"cost": {"total_cost_usd": 0, "total_duration_ms": 3840000}})[0]
-
-        self.assertTrue(line1.endswith("| $0.0000 | 1h4m"))
-
-    def test_missing_duration_renders_nothing(self):
-        line1 = self._render_with({"cost": {"total_cost_usd": 0}})[0]
-
-        self.assertEqual(line1, "[Opus 4.8]  " + "░" * 20 + "  0.0% (0 / 200,000) | $0.0000")
-
-    def test_non_numeric_duration_renders_nothing(self):
-        line1 = self._render_with({"cost": {"total_cost_usd": 0, "total_duration_ms": "x"}})[0]
-
-        self.assertTrue(line1.endswith("| $0.0000"))
-
-    def test_duration_segment_off(self):
-        extra = {"cost": {"total_cost_usd": 0, "total_duration_ms": 3840000}}
-
-        line1 = self._render_with(extra, {"segments": {"duration": False}})[0]
-
-        self.assertTrue(line1.endswith("| $0.0000"))
 
     def test_cost_over_yellow_uses_yellow(self):
         line1 = self._render_with({"cost": {"total_cost_usd": 12.5}}, {"no_color": False})[0]
@@ -748,6 +742,24 @@ class FmtDurationTests(unittest.TestCase):
 
     def test_days_and_hours(self):
         self.assertEqual(ccbar._fmt_duration(266400), "3d2h")
+
+
+class FmtNumTests(unittest.TestCase):
+    def test_compact_token_counts(self):
+        cases = [
+            (0, "0"),
+            (850, "850"),
+            (1000, "1k"),
+            (8500, "8.5k"),
+            (99438, "99k"),
+            (200000, "200k"),
+            (999999, "1M"),
+            (1000000, "1M"),
+            (1234567, "1.2M"),
+        ]
+        for n, expected in cases:
+            with self.subTest(n=n):
+                self.assertEqual(ccbar._fmt_num(n), expected)
 
 
 class PctColorTests(unittest.TestCase):

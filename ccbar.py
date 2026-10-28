@@ -20,7 +20,6 @@ DEFAULTS = {
         "context_bar": True,
         "context_pct": True,
         "cost": True,
-        "duration": True,
         "git_branch": True,
         "git_dirty": True,
         "git_changes": True,
@@ -44,7 +43,6 @@ DEFAULTS = {
         "bar_red": "red",
         "bar_empty": None,
         "cost": "cyan",
-        "duration": "white",
         "branch": "cyan",
         "dirty": "yellow",
         "insertions": "green",
@@ -208,7 +206,15 @@ def get_git_info(cfg, cwd):
 # ---------------------------------------------------------------------------
 
 def _fmt_num(n):
-    return f"{int(n):,}"
+    n = int(n)
+    if n < 1000:
+        return str(n)
+    if n < 10_000:
+        return f"{n / 1000:.1f}".rstrip("0").rstrip(".") + "k"
+    thousands = round(n / 1000)
+    if thousands < 1000:
+        return f"{thousands}k"
+    return f"{n / 1_000_000:.1f}".rstrip("0").rstrip(".") + "M"
 
 
 def context_tokens(data):
@@ -362,9 +368,9 @@ def render(data, cfg, git_info=None, events=None, now=None):
         cost_str = f"${total_cost:.{dec}f}"
         line1 += " | " + c(cost_str, _cost_color(total_cost, cfg))
 
-    duration_ms = _as_dict(data.get("cost")).get("total_duration_ms")
-    if segs.get("duration", True) and _is_number(duration_ms):
-        line1 += " | " + c(_fmt_duration(duration_ms / 1000), colors.get("duration", "white"))
+    cache_text = _prompt_cache_text(data, cfg, now, c) if segs.get("prompt_cache", True) else ""
+    if cache_text:
+        line1 += " | " + cache_text
 
     for name in EVENTS:
         if segs.get(name, True) and (events or {}).get(name, {}).get("fired"):
@@ -417,12 +423,10 @@ def render(data, cfg, git_info=None, events=None, now=None):
         line2_parts.append(c(worktree_prefix + _sanitize_label(worktree, 40), colors.get("worktree", "cyan")))
 
     rate_text = _rate_limits_text(data, cfg, now, c) if segs.get("rate_limits", True) else ""
-    cache_text = _prompt_cache_text(data, cfg, now, c) if segs.get("prompt_cache", True) else ""
 
     line2 = "  ".join(line2_parts)
-    for group in (rate_text, cache_text):
-        if group:
-            line2 = f"{line2} | {group}" if line2 else group
+    if rate_text:
+        line2 = f"{line2} | {rate_text}" if line2 else rate_text
 
     return line1 + "\n" + line2
 
@@ -645,7 +649,7 @@ MOCK_1M = {
     "session_id": "selftest-1m",
     "model": {"display_name": "Claude Opus 4.8 (1M context)"},
     "workspace": {"current_dir": os.path.expanduser("~")},
-    "cost": {"total_cost_usd": 1.2345, "total_duration_ms": 3840000},
+    "cost": {"total_cost_usd": 1.2345},
     "context_window": {
         "total_input_tokens": 821000,
         "context_window_size": 1000000,
