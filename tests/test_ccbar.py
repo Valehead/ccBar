@@ -435,6 +435,14 @@ class GitCacheTests(unittest.TestCase):
         self.assertEqual(state["events"], CROSSED_STATE["events"])
         self.assertEqual(state["window_size"], CROSSED_STATE["window_size"])
 
+    def test_miss_returns_repo_from_worktree_git_dir(self):
+        with mock.patch.object(ccbar, "get_git_info", return_value=CLEAN_INFO), \
+                mock.patch.object(ccbar, "_run_git", return_value="C:/src/ccBar/.git/worktrees/ccBar-x"):
+            result = ccbar.cached_git_info(_git_payload(), GIT_CFG, {}, now=1000.0)
+
+        self.assertEqual(result["repo"], "ccBar")
+        self.assertEqual(ccbar.load_state("sess-1")["git"]["repo"], "ccBar")
+
     def test_unsafe_session_id_bypasses_cache(self):
         data = {**_git_payload(), "session_id": "../evil"}
         with mock.patch.object(ccbar, "get_git_info", return_value=CLEAN_INFO), \
@@ -555,24 +563,77 @@ class RenderTests(unittest.TestCase):
 
         self.assertTrue(line1.startswith("[Opus 4.8]"))
 
+    def _worktree_line2(self, name, cfg=None, repo="ccBar"):
+        extra = {"worktree": {"name": name}, "workspace": {"current_dir": f"C:/src/{name}"}}
+        return self._render_with(extra, cfg, git_info={**CLEAN_INFO, "repo": repo})[1]
+
     def test_worktree_name_wins_over_git_worktree(self):
-        extra = {"worktree": {"name": "wt-a"}, "workspace": {"current_dir": "C:/repo", "git_worktree": "wt-b"}}
+        extra = {"worktree": {"name": "ccBar-a"}, "workspace": {"current_dir": "C:/src/ccBar-a", "git_worktree": "ccBar-b"}}
 
-        line2 = self._render_with(extra, git_info=CLEAN_INFO)[1]
+        line2 = self._render_with(extra, git_info={**CLEAN_INFO, "repo": "ccBar"})[1]
 
-        self.assertTrue(line2.endswith("⎇ wt-a"))
+        self.assertEqual(line2, "📁 ccBar ⎇ a | 🌿 main")
 
     def test_worktree_falls_back_to_git_worktree(self):
-        extra = {"workspace": {"current_dir": "C:/repo", "git_worktree": "wt-b"}}
+        extra = {"workspace": {"current_dir": "C:/src/ccBar-b", "git_worktree": "ccBar-b"}}
 
-        line2 = self._render_with(extra, git_info=CLEAN_INFO)[1]
+        line2 = self._render_with(extra, git_info={**CLEAN_INFO, "repo": "ccBar"})[1]
 
-        self.assertTrue(line2.endswith("⎇ wt-b"))
+        self.assertEqual(line2, "📁 ccBar ⎇ b | 🌿 main")
 
     def test_worktree_ascii_fallback_prefix(self):
-        line2 = self._render_with({"worktree": {"name": "wt-a"}}, {"icons": {"ascii_fallback": True}})[1]
+        line2 = self._worktree_line2("ccBar-a", {"icons": {"ascii_fallback": True}})
 
-        self.assertTrue(line2.endswith("wt wt-a"))
+        self.assertEqual(line2, "ccBar wt a | main")
+
+    def test_worktree_prefix_stripped(self):
+        self.assertEqual(self._worktree_line2("ccBar-readme-shot"), "📁 ccBar ⎇ readme-shot | 🌿 main")
+
+    def test_worktree_prefix_match_ignores_case(self):
+        self.assertEqual(self._worktree_line2("ccbar-x"), "📁 ccBar ⎇ x | 🌿 main")
+
+    def test_worktree_without_repo_prefix_shows_full_name(self):
+        self.assertEqual(self._worktree_line2("other-name"), "📁 ccBar ⎇ other-name | 🌿 main")
+
+    def test_worktree_equal_to_prefix_shows_full_name(self):
+        self.assertEqual(self._worktree_line2("ccBar-"), "📁 ccBar ⎇ ccBar- | 🌿 main")
+
+    def test_worktree_without_repo_name_follows_folder(self):
+        self.assertEqual(self._worktree_line2("ccBar-x", repo=""), "📁 ccBar-x ⎇ ccBar-x | 🌿 main")
+
+    def test_worktree_segment_off_shows_folder_only(self):
+        line2 = self._worktree_line2("ccBar-x", {"segments": {"worktree": False}})
+
+        self.assertEqual(line2, "📁 ccBar-x | 🌿 main")
+
+    def test_divider_between_folder_and_git_group(self):
+        line2 = self._render_with({}, {"icons": {"branch": ""}}, git_info=DIRTY_INFO)[1]
+
+        self.assertEqual(line2, "📁 repo | main*  +5/-1")
+
+    def test_no_leading_divider_without_folder(self):
+        line2 = self._render_with({"workspace": {"current_dir": ""}}, git_info=CLEAN_INFO)[1]
+
+        self.assertEqual(line2, "🌿 main")
+
+    def _branch_line2(self, branch, icons=None):
+        cfg = {"icons": {"branch": "", **(icons or {})}}
+        return self._render_with({}, cfg, git_info={**CLEAN_INFO, "branch": branch})[1]
+
+    def test_branch_at_cap_unchanged(self):
+        branch = "b" * ccbar.BRANCH_MAX_LEN
+
+        self.assertEqual(self._branch_line2(branch), "📁 repo | " + branch)
+
+    def test_long_branch_capped_with_ellipsis(self):
+        line2 = self._branch_line2("b" * 31)
+
+        self.assertEqual(line2, "📁 repo | " + "b" * 29 + "…")
+
+    def test_long_branch_capped_with_ascii_ellipsis(self):
+        line2 = self._branch_line2("b" * 40, {"ascii_fallback": True})
+
+        self.assertEqual(line2, "repo | " + "b" * 27 + "...")
 
     def test_rate_limits_shows_5h_with_countdown_and_ignores_7d(self):
         limits = {"five_hour": {"used_percentage": 23, "resets_at": NOW + 7800}, "seven_day": {"used_percentage": 41}}
@@ -742,6 +803,20 @@ class FmtDurationTests(unittest.TestCase):
 
     def test_days_and_hours(self):
         self.assertEqual(ccbar._fmt_duration(266400), "3d2h")
+
+
+class MainRepoNameTests(unittest.TestCase):
+    def test_linked_worktree_git_dir_names_main_repo(self):
+        self.assertEqual(ccbar._main_repo_name("C:/ValeDevSrc/ccBar/.git/worktrees/ccBar-readme-shot"), "ccBar")
+
+    def test_main_checkout_git_dir_is_unknown(self):
+        self.assertEqual(ccbar._main_repo_name("C:/ValeDevSrc/ccBar/.git"), "")
+
+    def test_none_is_unknown(self):
+        self.assertEqual(ccbar._main_repo_name(None), "")
+
+    def test_submodule_git_dir_is_unknown(self):
+        self.assertEqual(ccbar._main_repo_name("C:/ValeDevSrc/ccBar/.git/modules/x"), "")
 
 
 class FmtNumTests(unittest.TestCase):

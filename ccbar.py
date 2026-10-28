@@ -95,6 +95,7 @@ DEFAULTS = {
 }
 
 RATE_WINDOWS = (("5h", "five_hour"),)
+BRANCH_MAX_LEN = 30
 
 # ---------------------------------------------------------------------------
 # ANSI helpers
@@ -131,6 +132,12 @@ def _sanitize_label(text, max_len=100):
     text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
     text = re.sub(r"[\x00-\x1f\x7f]", "", text)
     return text[:max_len]
+
+
+def _truncate(text, max_len, ellipsis):
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - len(ellipsis)] + ellipsis
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +206,17 @@ def get_git_info(cfg, cwd):
     porcelain = _run_git(["--no-optional-locks", "status", "--porcelain"], timeout_ms, cwd) or ""
     ins, dels = _parse_shortstat(shortstat)
     return {"branch": branch, "insertions": ins, "deletions": dels, "dirty": bool(porcelain)}
+
+
+def _main_repo_name(git_dir):
+    # A linked worktree's git dir is <main>/.git/worktrees/<name>; anything else has no main repo to name
+    if not git_dir:
+        return ""
+    worktrees = os.path.dirname(os.path.normpath(git_dir))
+    dot_git = os.path.dirname(worktrees)
+    if os.path.basename(worktrees) != "worktrees" or os.path.basename(dot_git) != ".git":
+        return ""
+    return os.path.basename(os.path.dirname(dot_git))
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +323,13 @@ def _workspace_dir(data):
     return data.get("workspace", {}).get("current_dir", os.getcwd())
 
 
+def _worktree_short_name(name, repo):
+    prefix = repo + "-"
+    if len(name) > len(prefix) and name[: len(prefix)].lower() == prefix.lower():
+        return name[len(prefix):]
+    return name
+
+
 def render(data, cfg, git_info=None, events=None, now=None):
     segs = cfg.get("segments", {})
     colors = cfg.get("colors", {})
@@ -381,17 +406,27 @@ def render(data, cfg, git_info=None, events=None, now=None):
     cwd = _workspace_dir(data)
     git_info = git_info or {}
 
-    line2_parts = []
-
     folder = os.path.basename(cwd)
-    branch = _sanitize_label(git_info.get("branch", ""))
+    branch = _truncate(_sanitize_label(git_info.get("branch", "")), BRANCH_MAX_LEN, "..." if ascii_fallback else "…")
     ins = git_info.get("insertions", 0)
     dels = git_info.get("deletions", 0)
 
-    if folder:
-        folder_icon = icons.get("folder", "📁")
-        folder_prefix = "" if (ascii_fallback or not folder_icon) else folder_icon + " "
-        line2_parts.append(folder_prefix + folder)
+    folder_icon = icons.get("folder", "📁")
+    folder_prefix = "" if (ascii_fallback or not folder_icon) else folder_icon + " "
+    location = folder_prefix + folder if folder else ""
+
+    worktree = _as_dict(data.get("worktree")).get("name") or data.get("workspace", {}).get("git_worktree")
+    if segs.get("worktree", True) and isinstance(worktree, str) and worktree:
+        repo = git_info.get("repo")
+        if repo:
+            location = folder_prefix + repo
+            worktree = _worktree_short_name(worktree, repo)
+        worktree_icon = icons.get("worktree", "⎇")
+        worktree_prefix = "wt " if (ascii_fallback or not worktree_icon) else worktree_icon + " "
+        marker = c(worktree_prefix + _sanitize_label(worktree, 40), colors.get("worktree", "cyan"))
+        location = f"{location} {marker}" if location else marker
+
+    git_parts = []
 
     branch_part = ""
     if segs.get("git_branch", True) and branch:
@@ -406,7 +441,7 @@ def render(data, cfg, git_info=None, events=None, now=None):
         branch_part += c(marker, colors.get("dirty", "yellow"))
 
     if branch_part:
-        line2_parts.append(branch_part)
+        git_parts.append(branch_part)
 
     if segs.get("git_changes", True) and (ins or dels):
         parts = []
@@ -414,19 +449,12 @@ def render(data, cfg, git_info=None, events=None, now=None):
             parts.append(c(f"+{ins}", colors.get("insertions", "green")))
         if dels:
             parts.append(c(f"-{dels}", colors.get("deletions", "red")))
-        line2_parts.append("/".join(parts))
-
-    worktree = _as_dict(data.get("worktree")).get("name") or data.get("workspace", {}).get("git_worktree")
-    if segs.get("worktree", True) and isinstance(worktree, str) and worktree:
-        worktree_icon = icons.get("worktree", "⎇")
-        worktree_prefix = "wt " if (ascii_fallback or not worktree_icon) else worktree_icon + " "
-        line2_parts.append(c(worktree_prefix + _sanitize_label(worktree, 40), colors.get("worktree", "cyan")))
+        git_parts.append("/".join(parts))
 
     rate_text = _rate_limits_text(data, cfg, now, c) if segs.get("rate_limits", True) else ""
 
-    line2 = "  ".join(line2_parts)
-    if rate_text:
-        line2 = f"{line2} | {rate_text}" if line2 else rate_text
+    groups = (location, "  ".join(git_parts), rate_text)
+    line2 = " | ".join(g for g in groups if g)
 
     return line1 + "\n" + line2
 
@@ -594,6 +622,7 @@ def cached_git_info(data, cfg, state, now=None):
 
     info = get_git_info(cfg, cwd)
     git_dir = _run_git(["rev-parse", "--absolute-git-dir"], git_cfg.get("timeout_ms", 800), cwd)
+    info = {**info, "repo": _main_repo_name(git_dir)}
     entry = {**info, "ts": now, "cwd": cwd, "git_dir": git_dir, "head_log_mtime": _head_log_mtime(git_dir)}
 
     def store(state):

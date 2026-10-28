@@ -4,7 +4,7 @@ A two-line status line for [Claude Code](https://claude.ai/code): model, context
 
 ```
 [Claude Opus 4.8 · high]  ████████░░░░░░░░░░░░  41.2% (412k / 1M) | $1.2345 | cache 92% warm 3m | retro ✓
-📁 ccBar  🌿 main*  +12/-3  ⎇ feat-x | 5h 23% (2h10m)
+📁 ccBar ⎇ feat-x | 🌿 main*  +12/-3 | 5h 23% (2h10m)
 ```
 
 **Zero token cost.** ccBar runs as a local subprocess. Claude never sees its input or output, so the status line adds no API cost and no context usage.
@@ -87,11 +87,11 @@ Segments with nothing to show are left out.
 
 | Segment | Example | Switch off with |
 |---------|---------|-----------------|
-| Folder | `📁 ccBar` | always shown (`icons.folder: ""` drops the icon) |
-| Git branch | `🌿 main` | `segments.git_branch` |
+| Folder, or the main repo's name inside a git worktree | `📁 ccBar` | always shown (`icons.folder: ""` drops the icon) |
+| Worktree marker and short name, right after the repo name. A leading `<repo>-` is dropped from the worktree name | `📁 ccBar ⎇ feat-x` | `segments.worktree` |
+| Git branch, cut to 30 characters | `🌿 main` | `segments.git_branch` |
 | Dirty marker: anything uncommitted, untracked files included | `*` | `segments.git_dirty` |
 | Lines added and removed in tracked files compared with the last commit, staged and unstaged together | `+12/-3` | `segments.git_changes` |
-| Worktree name, when Claude Code reports the session is in a git worktree | `⎇ feat-x` | `segments.worktree` |
 | Plan usage for the 5-hour window, with time until it resets. Colored by the context bar thresholds. Claude Code sends this only on Pro and Max plans, after the first response | `5h 23% (2h10m)` | `segments.rate_limits` |
 
 Every switch is a boolean under `segments` in your [config](#configuration).
