@@ -685,7 +685,7 @@ class RenderTests(unittest.TestCase):
 
         self.assertEqual(line2, "5h 23%")
 
-    def test_prompt_cache_on_line1_between_cost_and_retro(self):
+    def test_warm_prompt_cache_ends_line2_after_rate_limits(self):
         data = {
             "workspace": {"current_dir": "C:/repo"},
             "model": {"display_name": "Opus 4.8"},
@@ -695,28 +695,37 @@ class RenderTests(unittest.TestCase):
 
         line1, line2 = ccbar.render(data, {"no_color": True}, events={"retro": {"fired": True}}, now=NOW).splitlines()
 
-        self.assertTrue(line1.endswith("| $0.0000 | cache 92% warm 3m | retro ✓"))
-        self.assertEqual(line2, "📁 repo | 5h 23%")
+        self.assertTrue(line1.endswith("| $0.0000 | retro ✓"))
+        self.assertEqual(line2, "📁 repo | 5h 23% | cache 92% warm 3m")
 
-    def test_cold_prompt_cache_ends_line1_and_skips_line2(self):
+    def test_cold_prompt_cache_ends_line2(self):
         extra = {"rate_limits": {"five_hour": {"used_percentage": 23}}, "prompt_cache": {"warm": False, "hit_ratio": 0.92}}
 
         line1, line2 = self._render_with(extra)
 
-        self.assertTrue(line1.endswith("| $0.0000 | cache 92% cold"))
-        self.assertEqual(line2, "📁 repo | 5h 23%")
+        self.assertTrue(line1.endswith("| $0.0000"))
+        self.assertEqual(line2, "📁 repo | 5h 23% | cache 92% cold")
 
-    def test_absent_prompt_cache_leaves_line1_ending_at_cost(self):
-        line1 = self._render_with({"cost": {"total_cost_usd": 0}})[0]
+    def test_line2_without_folder_or_rate_limits_is_just_cache(self):
+        extra = {"workspace": {"current_dir": ""}, "prompt_cache": {"warm": False, "hit_ratio": 0.92}}
+
+        line2 = self._render_with(extra)[1]
+
+        self.assertEqual(line2, "cache 92% cold")
+
+    def test_absent_prompt_cache_leaves_no_cache_group(self):
+        line1, line2 = self._render_with({"cost": {"total_cost_usd": 0}})
 
         self.assertEqual(line1, "[Opus 4.8]  " + "░" * 20 + "  0.0% (0 / 200k) | $0.0000")
+        self.assertEqual(line2, "📁 repo")
 
     def test_prompt_cache_segment_off_hides_it(self):
         extra = {"prompt_cache": {"caching_observed": True, "warm": True, "hit_ratio": 0.92}}
 
-        line1 = self._render_with(extra, {"segments": {"prompt_cache": False}})[0]
+        line1, line2 = self._render_with(extra, {"segments": {"prompt_cache": False}})
 
         self.assertTrue(line1.endswith("| $0.0000"))
+        self.assertEqual(line2, "📁 repo")
 
     def test_malformed_new_fields_render_nothing(self):
         extra = {"rate_limits": "garbage", "effort": 5, "worktree": "x"}
