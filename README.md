@@ -11,8 +11,8 @@ Later in a long session, context and cost turn yellow and the retro and handoff 
 Every segment, with all the optional markers showing:
 
 ```
-[Claude Opus 4.8 · high]  ████████░░░░░░░░░░░░  41.2% (412k / 1M) | $1.2345 | cache 92% warm 3m | retro ✓
-📁 ccBar ⎇ feat-x | 🌿 main*  +12/-3 | 5h 23% (2h10m)
+[Claude Opus 4.8 · high]  ████████░░░░░░░░░░░░  41.2% (412k / 1M) | $1.2345 | cache 92% warm 3m
+📁 ccBar ⎇ feat-x | 🌿 main*  +12/-3 | 5h 23% (2h10m) | retro ✓
 ```
 
 **Zero token cost.** ccBar runs as a local subprocess. Claude never sees its input or output, so the status line adds no API cost and no context usage.
@@ -91,8 +91,6 @@ Segments with nothing to show are left out.
 | Context used, as a percentage and in tokens | `41.2% (412k / 1M)` | `segments.context_pct` |
 | Session cost, an estimate from Claude Code, not your bill. Turns yellow from $10, red from $30 | `$1.2345` | `segments.cost` |
 | Prompt cache: hit ratio, warm (green, with time left before it expires) or cold (yellow). Appears after the first response and counts only the main conversation, not subagents | `cache 92% warm 3m` | `segments.prompt_cache` |
-| Retro marker, once the session retro has fired | `retro ✓` | `segments.retro` |
-| Handoff marker, once the session handoff has fired | `handoff ✓` | `segments.handoff` |
 
 **Line 2**
 
@@ -104,6 +102,8 @@ Segments with nothing to show are left out.
 | Dirty marker: anything uncommitted, untracked files included | `*` | `segments.git_dirty` |
 | Lines added and removed in tracked files compared with the last commit, staged and unstaged together | `+12/-3` | `segments.git_changes` |
 | Plan usage for the 5-hour window, with time until it resets. Colored by the context bar thresholds. Claude Code sends this only on Pro and Max plans, after the first response | `5h 23% (2h10m)` | `segments.rate_limits` |
+| Retro marker, once the session retro has fired | `retro ✓` | `segments.retro` |
+| Handoff marker, once the session handoff has fired | `handoff ✓` | `segments.handoff` |
 
 Every switch is a boolean under `segments` in your [config](#configuration).
 
@@ -124,7 +124,7 @@ Both are on by default. The status line watches context usage; the Stop hook the
 | Fires | Once per session, at 400,000 tokens or 70% of the model's context window, whichever comes first | Once per session, at 600,000 tokens or 85% of the window, whichever comes first |
 | What Claude does | Runs the `session-retro` skill: reviews the session for what went wrong, what could have been done better, and what to improve next time | Runs the `session-handoff` skill: writes a self-contained plan so a fresh session can pick up the work |
 | Writes | `~/.claude/retros/<date>-<folder>-<session>.md`, plus numbered memory or CLAUDE.md proposals that are applied only when you approve them | A plan in `~/.claude/plans/` named after the work, plus one line in chat to paste into a fresh session |
-| Marker | `retro ✓` on line 1 | `handoff ✓` on line 1 |
+| Marker | `retro ✓` on line 2 | `handoff ✓` on line 2 |
 | Run by hand | `/session-retro` | `/session-handoff` |
 | Switch off | `"retro": {"enabled": false}` | `"handoff": {"enabled": false}` |
 

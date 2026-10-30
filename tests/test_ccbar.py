@@ -533,29 +533,36 @@ class RenderTests(unittest.TestCase):
         self.assertIn("evil", out)
         self.assertNotIn("\x1b", out)
 
-    def _render_line1(self, cfg, events):
+    def _render_markers(self, cfg, events):
         data = {"workspace": {"current_dir": "C:/repo"}, "model": {"display_name": "X"}}
         git_info = {"branch": "", "insertions": 0, "deletions": 0}
-        return ccbar.render(data, {"no_color": True, **cfg}, git_info=git_info, events=events).splitlines()[0]
+        return ccbar.render(data, {"no_color": True, **cfg}, git_info=git_info, events=events).splitlines()
 
     def _render_line2(self, cfg, git_info):
         data = {"workspace": {"current_dir": "C:/repo"}, "model": {"display_name": "X"}}
         return ccbar.render(data, {"no_color": True, **cfg}, git_info=git_info).splitlines()[1]
 
-    def test_shows_handoff_marker_when_fired(self):
-        line1 = self._render_line1({}, {"handoff": {"fired": True}})
-
-        self.assertIn("handoff ✓", line1)
-
-    def test_shows_handoff_done_under_ascii_fallback(self):
-        line1 = self._render_line1({"icons": {"ascii_fallback": True}}, {"handoff": {"fired": True}})
-
-        self.assertIn("handoff done", line1)
-
-    def test_hides_handoff_marker_when_segment_off(self):
-        line1 = self._render_line1({"segments": {"handoff": False}}, {"handoff": {"fired": True}})
+    def test_shows_handoff_marker_at_end_of_line2_when_fired(self):
+        line1, line2 = self._render_markers({}, {"handoff": {"fired": True}})
 
         self.assertNotIn("handoff", line1)
+        self.assertEqual(line2, "📁 repo | handoff ✓")
+
+    def test_shows_both_markers_retro_first(self):
+        line2 = self._render_markers({}, {"retro": {"fired": True}, "handoff": {"fired": True}})[1]
+
+        self.assertEqual(line2, "📁 repo | retro ✓ | handoff ✓")
+
+    def test_shows_handoff_done_under_ascii_fallback(self):
+        line2 = self._render_markers({"icons": {"ascii_fallback": True}}, {"handoff": {"fired": True}})[1]
+
+        self.assertEqual(line2, "repo | handoff done")
+
+    def test_hides_handoff_marker_when_segment_off(self):
+        lines = self._render_markers({"segments": {"handoff": False}}, {"handoff": {"fired": True}})
+
+        self.assertEqual(lines[1], "📁 repo")
+        self.assertNotIn("handoff", lines[0])
 
     def test_shows_dirty_marker_after_branch(self):
         line2 = self._render_line2({"icons": {"branch": ""}}, {**CLEAN_INFO, "dirty": True})
@@ -775,8 +782,8 @@ class RenderTests(unittest.TestCase):
 
         line1, line2 = ccbar.render(data, {"no_color": True}, events={"retro": {"fired": True}}, now=NOW).splitlines()
 
-        self.assertTrue(line1.endswith("| $0.0000 | cache 92% warm 3m | retro ✓"))
-        self.assertEqual(line2, "📁 repo | 5h 23%")
+        self.assertTrue(line1.endswith("| $0.0000 | cache 92% warm 3m"))
+        self.assertEqual(line2, "📁 repo | 5h 23% | retro ✓")
 
     def test_cold_prompt_cache_follows_cost_on_line1(self):
         extra = {"rate_limits": {"five_hour": {"used_percentage": 23}}, "prompt_cache": {"warm": False, "hit_ratio": 0.92}}
