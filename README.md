@@ -429,7 +429,7 @@ Removes `statusLine`, the Stop hook and the guard hooks from `settings.json`, th
 
 ## Troubleshooting
 
-**Blank status line with no error.** The most common cause is `python` not being on PATH. The installer works around this by writing a working interpreter command into `settings.json`. If you installed manually, check that the `statusLine` command in `~/.claude/settings.json` points to a real Python.
+**Blank status line with no error.** The most common cause is `python` not being on PATH. The installer works around this by writing a working interpreter command into `settings.json`. If you installed manually, check that the `statusLine` command in `~/.claude/settings.json` points to a real Python. If the bar was working and went blank, check `~/.claude/ccbar-state/last-error.txt` for the traceback. Replay the input that caused it with `python ccbar.py < ~/.claude/ccbar-state/last-error-input.json`.
 
 **Status line shows raw text or garbled characters.** Your terminal may not support UTF-8 block characters. Set `"filled_char": "#"`, `"empty_char": "-"` and `"ascii_fallback": true` in the config.
 

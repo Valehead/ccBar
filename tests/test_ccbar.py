@@ -295,6 +295,51 @@ class RunStopHookTests(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(self._tmp.name, "old.json")))
 
 
+class MainRenderErrorTests(unittest.TestCase):
+    STDIN = json.dumps({"model": {"display_name": "Opus"}})
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._orig_state_dir = ccbar.STATE_DIR
+        ccbar.STATE_DIR = self._tmp.name
+
+    def tearDown(self):
+        ccbar.STATE_DIR = self._orig_state_dir
+        self._tmp.cleanup()
+
+    def _run_failing_render(self):
+        with mock.patch.object(ccbar, "load_config", return_value={}), \
+                mock.patch.object(ccbar, "cached_git_info", return_value=None), \
+                mock.patch.object(ccbar, "render", side_effect=RuntimeError("boom")), \
+                mock.patch("sys.argv", ["ccbar.py"]), \
+                mock.patch("sys.stdin", io.StringIO(self.STDIN)), \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            with self.assertRaises(SystemExit) as exit_ctx:
+                ccbar.main()
+        return stdout.getvalue(), exit_ctx.exception.code
+
+    def test_render_failure_logs_traceback_and_input(self):
+        out, code = self._run_failing_render()
+
+        self.assertEqual(out, "\n\n")
+        self.assertEqual(code, 0)
+        with open(os.path.join(self._tmp.name, "last-error.txt"), encoding="utf-8") as f:
+            self.assertIn("RuntimeError: boom", f.read())
+        with open(os.path.join(self._tmp.name, "last-error-input.json"), encoding="utf-8") as f:
+            self.assertEqual(f.read(), self.STDIN)
+
+    def test_unwritable_state_dir_still_prints_blank(self):
+        blocker = os.path.join(self._tmp.name, "not-a-dir")
+        with open(blocker, "w") as f:
+            f.write("")
+        ccbar.STATE_DIR = blocker
+
+        out, code = self._run_failing_render()
+
+        self.assertEqual(out, "\n\n")
+        self.assertEqual(code, 0)
+
+
 class GitInfoTests(unittest.TestCase):
     def test_shortstat_diffs_against_head(self):
         with mock.patch.object(ccbar, "_run_git", return_value="") as run_git:

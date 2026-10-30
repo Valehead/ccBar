@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import time
+import traceback
 
 # ---------------------------------------------------------------------------
 # Defaults
@@ -719,6 +720,20 @@ def selftest():
 # Entry point
 # ---------------------------------------------------------------------------
 
+def _log_render_error(raw):
+    try:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        with open(os.path.join(STATE_DIR, "last-error.txt"), "w", encoding="utf-8") as f:
+            f.write(stamp + "\n" + traceback.format_exc())
+        if raw is not None:
+            with open(os.path.join(STATE_DIR, "last-error-input.json"), "w", encoding="utf-8") as f:
+                f.write(raw)
+    except OSError:
+        # The bar must stay blank, not broken, even when the state dir is unwritable
+        pass
+
+
 def main():
     # Force UTF-8 output on Windows where the default codepage may reject block chars
     if hasattr(sys.stdout, "buffer"):
@@ -735,13 +750,16 @@ def main():
             sys.exit(1)
         sys.exit(0)
 
+    raw = None
     try:
-        data = json.loads(sys.stdin.read())
+        raw = sys.stdin.read()
+        data = json.loads(raw)
         cfg = load_config()
         state = update_event_state(data, cfg)
         git_info = cached_git_info(data, cfg, state)
         print(render(data, cfg, git_info=git_info, events=state.get("events", {}), now=time.time()))
     except Exception:
+        _log_render_error(raw)
         print("\n")
         sys.exit(0)
 
