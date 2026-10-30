@@ -2,7 +2,7 @@
   "_comment": "ccBar configuration, read from ~/.claude/ccbar.config.json. Every key is optional; a missing key uses its default. A list you set replaces the default list rather than adding to it. Unknown keys are ignored.",
 
   "segments": {
-    "_comment": "Switch each status line segment on (true) or off (false). retro and handoff hide only the line 1 markers; to stop the events themselves, use retro.enabled and handoff.enabled.",
+    "_comment": "Switch each status line segment on (true) or off (false). retro and handoff hide only the line 1 markers; to stop the events themselves, use retro.enabled and handoff.enabled. subagents switches ccBar's subagent rows off; Claude Code then draws its own.",
     "model": true,
     "context_bar": true,
     "context_pct": true,
@@ -16,7 +16,8 @@
     "fast": true,
     "worktree": true,
     "rate_limits": true,
-    "prompt_cache": true
+    "prompt_cache": true,
+    "subagents": true
   },
 
   "bar": {

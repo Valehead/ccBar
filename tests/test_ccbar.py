@@ -842,6 +842,134 @@ class RenderTests(unittest.TestCase):
         self.assertIn("\x1b[33m$12.5000\x1b[0m", line1)
 
 
+NOW_MS = 1_800_000_000_000
+
+
+def _task(**over):
+    task = {"id": "t1", "agentType": "Explore", "label": "Find install hooks",
+            "description": "Search install.py", "status": "running",
+            "startTime": NOW_MS - 185_000, "tokenCount": 82000, "contextWindowSize": 200000}
+    task.update(over)
+    return task
+
+
+def _subagent_cfg(**over):
+    return ccbar._deep_merge(ccbar.DEFAULTS, {"no_color": True, **over})
+
+
+class SubagentRowsTests(unittest.TestCase):
+    def _content(self, task, cfg=None, columns=None):
+        data = {"tasks": [task]}
+        if columns is not None:
+            data["columns"] = columns
+        return ccbar.render_subagents(data, cfg or _subagent_cfg(), NOW_MS)[0]["content"]
+
+    def test_renders_type_label_bar_tokens_and_elapsed(self):
+        rows = ccbar.render_subagents({"tasks": [_task()]}, _subagent_cfg(), NOW_MS)
+
+        self.assertEqual(rows, [{"id": "t1", "content": "Explore · Find install hooks  ██░░░ 41% (82k)  3m"}])
+
+    def test_long_label_truncates_to_columns(self):
+        content = self._content(_task(), columns=40)
+
+        self.assertEqual(content, "Explore · Find ins…  ██░░░ 41% (82k)  3m")
+
+    def test_label_dropped_when_columns_too_narrow(self):
+        content = self._content(_task(), columns=20)
+
+        self.assertTrue(content.startswith("Explore  "))
+        self.assertNotIn("·", content)
+
+    def test_missing_context_window_drops_bar_and_pct(self):
+        task = _task()
+        del task["contextWindowSize"]
+
+        content = self._content(task)
+
+        self.assertEqual(content, "Explore · Find install hooks  82k  3m")
+
+    def test_missing_agent_type_drops_type(self):
+        task = _task()
+        del task["agentType"]
+
+        content = self._content(task)
+
+        self.assertTrue(content.startswith("Find install hooks  "))
+
+    def test_falls_back_to_description_without_label(self):
+        task = _task()
+        del task["label"]
+
+        content = self._content(task)
+
+        self.assertTrue(content.startswith("Explore · Search install.py  "))
+
+    def test_ascii_fallback_uses_dash_separator(self):
+        content = self._content(_task(), _subagent_cfg(icons={"ascii_fallback": True}))
+
+        self.assertIn("Explore - Find", content)
+
+    def test_ansi_in_label_is_stripped(self):
+        content = self._content(_task(label="\x1b[31mevil"))
+
+        self.assertIn("evil", content)
+        self.assertNotIn("\x1b", content)
+
+    def test_segment_off_returns_no_rows(self):
+        rows = ccbar.render_subagents({"tasks": [_task()]}, _subagent_cfg(segments={"subagents": False}), NOW_MS)
+
+        self.assertEqual(rows, [])
+
+    def test_task_without_token_count_is_skipped(self):
+        bad = _task(id="bad")
+        del bad["tokenCount"]
+
+        rows = ccbar.render_subagents({"tasks": [bad, _task()]}, _subagent_cfg(), NOW_MS)
+
+        self.assertEqual([row["id"] for row in rows], ["t1"])
+
+    def test_colors_pct_by_threshold(self):
+        content = self._content(_task(tokenCount=180000), _subagent_cfg(no_color=False))
+
+        self.assertIn(ccbar._ANSI["red"], content)
+
+
+class MainSubagentsTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._orig_state_dir = ccbar.STATE_DIR
+        ccbar.STATE_DIR = self._tmp.name
+
+    def tearDown(self):
+        ccbar.STATE_DIR = self._orig_state_dir
+        self._tmp.cleanup()
+
+    def _run(self, stdin):
+        with mock.patch.object(ccbar, "load_config", return_value=_subagent_cfg()), \
+                mock.patch.object(ccbar.time, "time", return_value=NOW_MS / 1000), \
+                mock.patch("sys.argv", ["ccbar.py", "--subagents"]), \
+                mock.patch("sys.stdin", io.StringIO(stdin)), \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            with self.assertRaises(SystemExit) as exit_ctx:
+                ccbar.main()
+        return stdout.getvalue(), exit_ctx.exception.code
+
+    def test_prints_one_json_line_per_task(self):
+        stdin = json.dumps({"tasks": [_task(id="a"), _task(id="b")]})
+
+        out, code = self._run(stdin)
+
+        self.assertEqual([json.loads(line)["id"] for line in out.splitlines()], ["a", "b"])
+        self.assertEqual(code, 0)
+
+    def test_malformed_stdin_prints_nothing_and_exits_zero(self):
+        out, code = self._run("not json")
+
+        self.assertEqual(out, "")
+        self.assertEqual(code, 0)
+        self.assertTrue(os.path.exists(os.path.join(self._tmp.name, "last-error.txt")))
+
+
 class PromptCacheTextTests(unittest.TestCase):
     def _text(self, cache, now=NOW):
         return ccbar._prompt_cache_text({"prompt_cache": cache}, {}, now, lambda text, color: text)

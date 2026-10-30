@@ -138,6 +138,10 @@ def build_status_line(command):
     return {"type": "command", "command": command, "refreshInterval": REFRESH_INTERVAL_S}
 
 
+def build_subagent_status_line(status_command):
+    return {"type": "command", "command": status_command + " --subagents"}
+
+
 def resolve_mode(settings, script_dir, args):
     """Return True for in-place mode.
 
@@ -155,6 +159,10 @@ def resolve_mode(settings, script_dir, args):
 
 def is_ccbar_stop_hook(command):
     return "ccbar.py" in command and "--stop-hook" in command
+
+
+def is_ccbar_subagent_line(command):
+    return "ccbar.py" in command and "--subagents" in command
 
 
 def is_guard_hook(command):
@@ -222,6 +230,28 @@ def apply_guards(settings, py_cmd, script_dir, guards):
         upsert_hook(settings, event, entry, lambda c, f=flag: is_guard_hook(c) and f in c, matcher)
         actions.append(f"Registered {event} guard hook ({flag}) in {SETTINGS_PATH}")
     return actions
+
+
+def _subagent_command(settings):
+    value = settings.get("subagentStatusLine")
+    return value.get("command", "") if isinstance(value, dict) else ""
+
+
+def apply_subagent_status_line(settings, status_command):
+    """Return the action line to print. Leaves someone else's subagentStatusLine alone."""
+    existing = settings.get("subagentStatusLine")
+    if existing is not None and not is_ccbar_subagent_line(_subagent_command(settings)):
+        return f"Kept your own subagentStatusLine in {SETTINGS_PATH} (ccBar subagent rows not installed)"
+    settings["subagentStatusLine"] = build_subagent_status_line(status_command)
+    verb = "Updated" if existing is not None else "Added"
+    return f"{verb} subagentStatusLine in {SETTINGS_PATH}"
+
+
+def remove_subagent_status_line(settings):
+    if not is_ccbar_subagent_line(_subagent_command(settings)):
+        return False
+    del settings["subagentStatusLine"]
+    return True
 
 
 def next_steps(dest_config, guards_registered, py_display):
@@ -302,11 +332,13 @@ def install(dry_run=False, no_verify=False, reset_config=False, in_place=False, 
     prev = settings.get("statusLine")
     settings["statusLine"] = status_cmd
     upsert_hook(settings, "Stop", {"type": "command", "command": stop_cmd, "timeout": 10}, is_ccbar_stop_hook)
+    subagent_action = apply_subagent_status_line(settings, status_command)
     guard_actions = apply_guards(settings, py_cmd, SCRIPT_DIR, guards)
     save_settings(settings, dry_run)
     if not dry_run:
         verb = "Updated" if prev else "Added"
         print(f"  {verb} statusLine in {SETTINGS_PATH}")
+        print(f"  {subagent_action}")
         print(f"  Registered Stop hook (session retro) in {SETTINGS_PATH}")
         for action in guard_actions:
             print(f"  {action}")
@@ -334,14 +366,20 @@ def uninstall(dry_run=False):
     settings = load_settings()
     removed_status = settings.pop("statusLine", None) is not None
     removed_stop = remove_hooks(settings, "Stop", is_ccbar_stop_hook)
+    removed_subagents = remove_subagent_status_line(settings)
     removed_guards = remove_guard_hooks(settings)
-    if removed_status or removed_stop or removed_guards:
+    if removed_status or removed_stop or removed_subagents or removed_guards:
         save_settings(settings, dry_run)
     if removed_status:
         if not dry_run:
             print(f"  Removed statusLine from {SETTINGS_PATH}")
     else:
         print("  statusLine not present in settings.json, nothing to remove.")
+    if removed_subagents:
+        if not dry_run:
+            print(f"  Removed subagentStatusLine from {SETTINGS_PATH}")
+    else:
+        print("  ccBar subagentStatusLine not present in settings.json, nothing to remove.")
     if removed_stop:
         if not dry_run:
             print(f"  Removed Stop hook (session retro) from {SETTINGS_PATH}")
