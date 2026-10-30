@@ -46,7 +46,11 @@ FILE_FLAGS = ("--body-file", "--input", "--in-file")
 BUILD_TIMEOUT_S = 840
 MARKER = "{marker}"
 BUILD_PRESETS = {
-    "dotnet": {"glob": "*.cs", "root_marker": ["*.sln", "*.slnx"], "command": ["dotnet", "build", MARKER, "-v", "q", "-clp:ErrorsOnly"]},
+    "dotnet": {
+        "glob": ["*.cs", "*.csproj", "*.props", "*.targets"],
+        "root_marker": ["*.sln", "*.slnx"],
+        "command": ["dotnet", "build", MARKER, "-nologo", "-v", "q", "-clp:ErrorsOnly"],
+    },
 }
 BUILD_OUTPUT_LINES = 40
 PUSH_RE = re.compile(r"\bgit\b(?:\s+-C\s+\S+)?\s+push\b|\bgh\s+pr\s+create\b")
@@ -155,13 +159,20 @@ def expand_builds(builds):
     ]
 
 
+def _valid_patterns(value):
+    return isinstance(value, str) or (isinstance(value, list) and len(value) > 0 and all(isinstance(p, str) for p in value))
+
+
+def _as_patterns(value):
+    return [value] if isinstance(value, str) else value
+
+
 def _valid_build_row(row):
     if not isinstance(row, dict):
         return False
-    m = row.get("root_marker")
     return (
-        isinstance(row.get("glob"), str)
-        and (isinstance(m, str) or (isinstance(m, list) and len(m) > 0 and all(isinstance(p, str) for p in m)))
+        _valid_patterns(row.get("glob"))
+        and _valid_patterns(row.get("root_marker"))
         and isinstance(row.get("command"), list)
         and len(row["command"]) > 0
     )
@@ -194,10 +205,9 @@ def matching_roots(changed, builds, top, isdir, listdir):
     roots = []
     for path in changed:
         for row in rows:
-            if not fnmatch.fnmatch(path, row["glob"]):
+            if not any(fnmatch.fnmatch(path, g) for g in _as_patterns(row["glob"])):
                 continue
-            m = row["root_marker"]
-            markers = [m] if isinstance(m, str) else m
+            markers = _as_patterns(row["root_marker"])
             command = row["command"]
             d = os.path.normpath(os.path.join(top, os.path.dirname(path)))
             while True:
