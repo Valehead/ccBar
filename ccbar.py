@@ -27,6 +27,7 @@ DEFAULTS = {
         "retro": True,
         "handoff": True,
         "effort": True,
+        "fast": True,
         "worktree": True,
         "rate_limits": True,
         "prompt_cache": True,
@@ -358,10 +359,12 @@ def render(data, cfg, git_info=None, events=None, now=None):
 
     ascii_fallback = icons.get("ascii_fallback", False)
 
+    sep = " - " if ascii_fallback else " · "
     effort = _as_dict(data.get("effort")).get("level")
     if segs.get("effort", True) and model_raw and isinstance(effort, str) and effort:
-        sep = " - " if ascii_fallback else " · "
         model_raw = f"{model_raw}{sep}{_sanitize_label(effort, 10)}"
+    if segs.get("fast", True) and model_raw and data.get("fast_mode") is True:
+        model_raw = f"{model_raw}{sep}fast"
 
     # ---- build line 1 ----
     bar_color = _pct_color(pct, cfg)

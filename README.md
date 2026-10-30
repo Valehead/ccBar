@@ -84,6 +84,7 @@ Segments with nothing to show are left out.
 |---------|---------|-----------------|
 | Model | `[Claude Opus 4.8]` | `segments.model` |
 | Effort level, inside the model bracket when Claude Code reports one | `· high` | `segments.effort` |
+| Fast mode, inside the model bracket when `/fast` is on | `· fast` | `segments.fast` |
 | Context bar: green up to 60%, yellow up to 80%, red above | `████████░░░░` | `segments.context_bar` |
 | Context used, as a percentage and in tokens | `41.2% (412k / 1M)` | `segments.context_pct` |
 | Session cost, an estimate from Claude Code, not your bill. Turns yellow from $10, red from $30 | `$1.2345` | `segments.cost` |
@@ -235,6 +236,7 @@ The blocks below show the defaults.
   "retro": true,
   "handoff": true,
   "effort": true,
+  "fast": true,
   "worktree": true,
   "rate_limits": true,
   "prompt_cache": true

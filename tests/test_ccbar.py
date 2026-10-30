@@ -608,6 +608,41 @@ class RenderTests(unittest.TestCase):
 
         self.assertTrue(line1.startswith("[Opus 4.8]"))
 
+    def test_fast_shown_after_effort(self):
+        line1 = self._render_with({"effort": {"level": "high"}, "fast_mode": True})[0]
+
+        self.assertTrue(line1.startswith("[Opus 4.8 · high · fast]"))
+
+    def test_fast_shown_without_effort(self):
+        line1 = self._render_with({"fast_mode": True})[0]
+
+        self.assertTrue(line1.startswith("[Opus 4.8 · fast]"))
+
+    def test_fast_mode_false_shows_nothing(self):
+        line1 = self._render_with({"fast_mode": False})[0]
+
+        self.assertTrue(line1.startswith("[Opus 4.8]"))
+
+    def test_fast_mode_missing_shows_nothing(self):
+        line1 = self._render_with({})[0]
+
+        self.assertNotIn("fast", line1)
+
+    def test_fast_mode_non_bool_shows_nothing(self):
+        line1 = self._render_with({"fast_mode": "yes"})[0]
+
+        self.assertTrue(line1.startswith("[Opus 4.8]"))
+
+    def test_fast_hidden_when_segment_off(self):
+        line1 = self._render_with({"fast_mode": True}, {"segments": {"fast": False}})[0]
+
+        self.assertTrue(line1.startswith("[Opus 4.8]"))
+
+    def test_fast_uses_dash_under_ascii_fallback(self):
+        line1 = self._render_with({"fast_mode": True}, {"icons": {"ascii_fallback": True}})[0]
+
+        self.assertTrue(line1.startswith("[Opus 4.8 - fast]"))
+
     def _worktree_line2(self, name, cfg=None, repo="ccBar"):
         extra = {"worktree": {"name": name}, "workspace": {"current_dir": f"C:/src/{name}"}}
         return self._render_with(extra, cfg, git_info={**CLEAN_INFO, "repo": repo})[1]
