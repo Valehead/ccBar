@@ -37,7 +37,8 @@ POSTING_RE = re.compile(
     r"|\bgh\s+api\b.*?/(?:reviews|comments)\b"
     r"|\baz\s+repos\s+pr\s+(?:create|update)\b"
     r"|\baz\s+boards\s+work-item\s+(?:create|update)\b"
-    r"|\baz\s+devops\s+invoke\b.*?--resource[\s=]+\S*(?i:threads|comments)",
+    r"|\baz\s+devops\s+invoke\b.*?--resource[\s=]+\S*(?i:threads|comments)"
+    r"|\baz\s+rest\b.*?/(?:threads|comments)\b",
     re.S,
 )
 FILE_FLAGS = ("--body-file", "--input", "--in-file")
