@@ -1,4 +1,5 @@
-import json, os, sys, unittest
+import contextlib, io, json, os, sys, tempfile, unittest
+from unittest import mock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import install
 
@@ -195,6 +196,69 @@ class ResolveModeTests(unittest.TestCase):
 
     def test_match_is_case_insensitive(self):
         self.assertTrue(install.resolve_mode(IN_PLACE_STATUS, "c:\\DEV\\ccbar", []))
+
+
+class LoadSettingsTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        claude = os.path.join(tmp.name, ".claude")
+        os.makedirs(claude)
+        self.settings = os.path.join(claude, "settings.json")
+        self.bak = os.path.join(claude, "settings.json.bak")
+        paths = {
+            "CLAUDE_DIR": claude,
+            "SETTINGS_PATH": self.settings,
+            "SETTINGS_BAK": self.bak,
+            "DEST_SCRIPT": os.path.join(claude, "ccbar.py"),
+            "DEST_CONFIG": os.path.join(claude, "ccbar.config.json"),
+            "DEST_CONFIG_BAK": os.path.join(claude, "ccbar.config.json.bak"),
+            "DEST_SKILLS_DIR": os.path.join(claude, "skills"),
+        }
+        patcher = mock.patch.multiple(install, **paths)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def write(self, path, data):
+        with open(path, "wb") as f:
+            f.write(data)
+
+    def read(self, path):
+        with open(path, "rb") as f:
+            return f.read()
+
+    def assert_refuses(self, call):
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as raised:
+                call()
+        self.assertEqual(raised.exception.code, 1)
+
+    def test_malformed_json_stops_install_and_leaves_files_unchanged(self):
+        self.write(self.settings, b'{"a": 1,}')
+        self.write(self.bak, b'{"good": true}')
+
+        with mock.patch.object(install, "find_python", return_value=(["py", "-3"], "py -3")):
+            self.assert_refuses(lambda: install.install(no_verify=True))
+
+        self.assertEqual(self.read(self.settings), b'{"a": 1,}')
+        self.assertEqual(self.read(self.bak), b'{"good": true}')
+
+    def test_malformed_json_stops_uninstall_and_leaves_files_unchanged(self):
+        self.write(self.settings, b'{"a": 1,}')
+        self.write(self.bak, b'{"good": true}')
+
+        self.assert_refuses(install.uninstall)
+
+        self.assertEqual(self.read(self.settings), b'{"a": 1,}')
+        self.assertEqual(self.read(self.bak), b'{"good": true}')
+
+    def test_top_level_array_stops(self):
+        self.write(self.settings, b"[]")
+
+        self.assert_refuses(install.load_settings)
+
+    def test_missing_file_gives_empty_dict(self):
+        self.assertEqual(install.load_settings(), {})
 
 
 if __name__ == "__main__":

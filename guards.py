@@ -37,7 +37,9 @@ POSTING_RE = re.compile(
     r"|\bgh\s+api\b.*?/(?:reviews|comments)\b"
     r"|\baz\s+repos\s+pr\s+(?:create|update)\b"
     r"|\baz\s+boards\s+work-item\s+(?:create|update)\b"
-    r"|\baz\s+devops\s+invoke\b.*?--resource[\s=]+\S*(?i:threads|comments)",
+    r"|\baz\s+devops\s+invoke\b.*?--resource[\s=]+\S*(?i:threads|comments)"
+    # Anchored so the lookahead runs once; unanchored, a long non-matching command takes seconds
+    r"|(?is:\A(?=.*\baz\s+rest\b).*/(?:threads|comments)\b)",
     re.S,
 )
 FILE_FLAGS = ("--body-file", "--input", "--in-file")
@@ -141,13 +143,19 @@ def push_dir(command, cwd, posix):
 
 
 def _valid_build_row(row):
+    if not isinstance(row, dict):
+        return False
+    m = row.get("root_marker")
     return (
-        isinstance(row, dict)
-        and isinstance(row.get("glob"), str)
-        and isinstance(row.get("root_marker"), str)
+        isinstance(row.get("glob"), str)
+        and (isinstance(m, str) or (isinstance(m, list) and len(m) > 0 and all(isinstance(p, str) for p in m)))
         and isinstance(row.get("command"), list)
         and len(row["command"]) > 0
     )
+
+
+def _has_marker(entries, markers):
+    return any(fnmatch.filter(entries, p) for p in markers)
 
 
 def matching_roots(changed, builds, top, isdir, listdir):
@@ -158,10 +166,12 @@ def matching_roots(changed, builds, top, isdir, listdir):
         for row in rows:
             if not fnmatch.fnmatch(path, row["glob"]):
                 continue
+            m = row["root_marker"]
+            markers = [m] if isinstance(m, str) else m
             d = os.path.normpath(os.path.join(top, os.path.dirname(path)))
             while True:
                 # A deleted file's directory may be gone; keep walking up
-                if isdir(d) and fnmatch.filter(listdir(d), row["root_marker"]):
+                if isdir(d) and _has_marker(listdir(d), markers):
                     pair = (d, tuple(row["command"]))
                     if pair not in roots:
                         roots.append(pair)

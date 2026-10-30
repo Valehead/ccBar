@@ -166,7 +166,7 @@ Before a posting command runs, the guard checks the command and any body file it
 
 Details:
 - Entries are literal substrings, not patterns.
-- Posting commands: `gh pr` and `gh issue` `create`, `edit`, `comment` and `review`; `gh api` calls to a `reviews` or `comments` endpoint; `az repos pr create|update`; `az boards work-item create|update`; and `az devops invoke` when `--resource` names threads or comments.
+- Posting commands: `gh pr` and `gh issue` `create`, `edit`, `comment` and `review`; `gh api` calls to a `reviews` or `comments` endpoint; `az repos pr create|update`; `az boards work-item create|update`; `az devops invoke` when `--resource` names threads or comments; and any command that runs `az rest` and names a `threads` or `comments` URI anywhere, in any case (so a PowerShell `$uri` set before the call counts).
 - Body files: `--body-file`, `-F`, `--input`, `--in-file`, `key=@file` and `@file`.
 - Runs before every Bash and PowerShell command (Claude on Windows can post through either). Any other command costs one regex search.
 
@@ -178,7 +178,7 @@ Details:
 Does nothing until you add rows to `guards.build_gate.builds`. A row is:
 
 ```json
-{"glob": "*.cs", "root_marker": "*.sln", "command": ["dotnet", "build", "-v", "q", "-clp:ErrorsOnly"]}
+{"glob": "*.cs", "root_marker": ["*.sln", "*.slnx"], "command": ["dotnet", "build", "-v", "q", "-clp:ErrorsOnly"]}
 ```
 
 Before `git push` or `gh pr create`, the guard finds the files your unpushed commits change. Each file that matches a row's `glob` walks up from its directory to the repo root, and the first directory holding something that matches `root_marker` is its project root. The row's `command` runs there. If it fails, the push is blocked and Claude gets the last 40 lines of output and is told to fix the errors first.
@@ -189,7 +189,7 @@ Examples for several stacks. Keep only the rows for stacks you use:
 "guards": {
   "build_gate": {
     "builds": [
-      {"glob": "*.cs", "root_marker": "*.sln", "command": ["dotnet", "build", "-v", "q", "-clp:ErrorsOnly"]},
+      {"glob": "*.cs", "root_marker": ["*.sln", "*.slnx"], "command": ["dotnet", "build", "-v", "q", "-clp:ErrorsOnly"]},
       {"glob": "*.ts", "root_marker": "package.json", "command": ["npm", "run", "build"]},
       {"glob": "*.rs", "root_marker": "Cargo.toml", "command": ["cargo", "build", "--quiet"]},
       {"glob": "*.go", "root_marker": "go.mod", "command": ["go", "build", "./..."]}
@@ -202,6 +202,7 @@ The TypeScript row assumes your `package.json` has a `build` script. Plain `dotn
 
 Details:
 - `glob` and `root_marker` are `fnmatch` patterns matched against repo-relative paths, where `*` crosses `/`, so `*.cs` matches `src/a/b.cs`.
+- `root_marker` is one pattern or a list of patterns. The first directory holding anything that matches any of them is the root. Use `["*.sln", "*.slnx"]` rather than `"*.sln*"`, which also matches `.sln.DotSettings` files.
 - `command` is an argument list, not a shell string.
 - Unpushed commits are compared with the branch's upstream, or `origin/HEAD` when there is none. The build itself runs against the working tree.
 - The repo is the command's working directory, or the `<dir>` of a leading `cd <dir> &&` or of `git -C <dir> push`.
@@ -438,6 +439,8 @@ Removes `statusLine`, the Stop hook and the guard hooks from `settings.json`, th
 **Status line is slow.** Each git call is capped by `git.timeout_ms` (default 800). Lower it if git is slow in a large repo; a call that times out is left off the bar instead of holding it up. Git results are reused for `git.cache_ttl_ms` (default 3000); raise it to run git less often.
 
 **A guard blocked something it shouldn't.** Switch that guard off with `"enabled": false` under its `guards` key, or remove all guards with `python install.py --no-guards`.
+
+**Installer says it can't read settings.json.** The file isn't valid JSON (often a trailing comma from a hand edit). Fix it, or move it aside, and rerun. The installer refuses to write so it can't wipe your other settings.
 
 ---
 

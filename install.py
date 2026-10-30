@@ -89,9 +89,18 @@ def load_settings():
         return {}
     try:
         with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+            settings = json.load(f)
+    except (OSError, ValueError) as e:
+        _refuse_settings(f"could not read {SETTINGS_PATH}: {e}")
+    if not isinstance(settings, dict):
+        _refuse_settings(f"could not read {SETTINGS_PATH}: expected a JSON object at the top level")
+    return settings
+
+
+def _refuse_settings(message):
+    print(f"ERROR: {message}", file=sys.stderr)
+    print("Fix the file or move it aside, then rerun. settings.json was left unchanged.", file=sys.stderr)
+    sys.exit(1)
 
 
 def save_settings(data, dry_run):

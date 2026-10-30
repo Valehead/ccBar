@@ -106,6 +106,10 @@ class IsPostingCommandTests(unittest.TestCase):
             "az repos pr update --id 1 -d x",
             "az boards work-item update --id 1 --discussion x",
             "az devops invoke --area git --resource pullRequestThreads --in-file t.json",
+            "az rest --method post --uri https://dev.azure.com/o/p/_apis/git/repositories/r/pullRequests/1/threads?api-version=7.1 --body x",
+            "az rest --method post --uri https://dev.azure.com/o/p/_apis/wit/workItems/5/comments?api-version=7.1-preview.4 --body x",
+            '$uri = "https://dev.azure.com/o/p/_apis/git/repositories/r/pullRequests/1/threads"; az rest --method post --uri $uri --body x',
+            "az rest --method post --uri https://dev.azure.com/o/p/_apis/git/repositories/r/pullRequests/1/Threads --body x",
         )
 
         for command in commands:
@@ -113,7 +117,13 @@ class IsPostingCommandTests(unittest.TestCase):
                 self.assertTrue(guards.is_posting_command(command))
 
     def test_non_posting_commands_do_not_match(self):
-        commands = ("git status", "gh pr view 3", "gh api repos/o/r/pulls", "az repos pr list")
+        commands = (
+            "git status",
+            "gh pr view 3",
+            "gh api repos/o/r/pulls",
+            "az repos pr list",
+            "az rest --method post --uri https://dev.azure.com/o/p/_apis/git/repositories/r/pullRequests/1",
+        )
 
         for command in commands:
             with self.subTest(command=command):
@@ -152,6 +162,9 @@ class ReferencedFilesTests(unittest.TestCase):
 
     def test_in_file(self):
         self.assertEqual(guards.referenced_files("az devops invoke --in-file t.json", True), ["t.json"])
+
+    def test_az_rest_body_at_file(self):
+        self.assertEqual(guards.referenced_files("az rest --method post --uri x/threads --body @body.json", True), ["body.json"])
 
     def test_stdin_dash_is_skipped(self):
         self.assertEqual(guards.referenced_files("gh api x --input -", True), [])
@@ -235,6 +248,43 @@ class RunPostedTextTests(unittest.TestCase):
 
         self.assertEqual(code, 2)
 
+    def test_az_rest_thread_post_with_banned_inline_body_returns_2(self):
+        command = (
+            "az rest --method post --uri https://dev.azure.com/o/p/_apis/git/repositories/r/pullRequests/1/threads?api-version=7.1 "
+            "--body '{\"comments\":[{\"content\":\"a " + EM_DASH + " b\"}]}'"
+        )
+
+        with contextlib.redirect_stderr(io.StringIO()):
+            code = guards.run_posted_text(self.payload(command), posted_text_cfg())
+
+        self.assertEqual(code, 2)
+
+    def test_az_rest_thread_post_with_banned_body_file_returns_2(self):
+        command = "az rest --method post --uri https://dev.azure.com/o/p/_apis/git/repositories/r/pullRequests/1/threads --body @b.md"
+
+        with contextlib.redirect_stderr(io.StringIO()):
+            code = guards.run_posted_text(self.payload(command, cwd=self.tmp.name), posted_text_cfg())
+
+        self.assertEqual(code, 2)
+
+    def test_powershell_uri_variable_before_az_rest_with_banned_body_file_returns_2(self):
+        command = (
+            '$uri = "https://dev.azure.com/o/p/_apis/git/repositories/r/pullRequests/1/threads?api-version=7.1"; '
+            'az rest --method post --uri $uri --body "@b.md"'
+        )
+
+        with contextlib.redirect_stderr(io.StringIO()):
+            code = guards.run_posted_text(self.payload(command, tool_name="PowerShell", cwd=self.tmp.name), posted_text_cfg())
+
+        self.assertEqual(code, 2)
+
+    def test_az_rest_thread_get_without_body_returns_0(self):
+        command = "az rest --method get --uri https://dev.azure.com/o/p/_apis/git/repositories/r/pullRequests/1/threads"
+
+        code = guards.run_posted_text(self.payload(command, cwd=self.tmp.name), posted_text_cfg())
+
+        self.assertEqual(code, 0)
+
     def test_empty_banned_list_returns_0(self):
         code = guards.run_posted_text(self.payload("gh pr create --body-file b.md", cwd=self.tmp.name), posted_text_cfg(banned=()))
 
@@ -242,6 +292,7 @@ class RunPostedTextTests(unittest.TestCase):
 
 
 PY_ROW = {"glob": "*.py", "root_marker": "setup.cfg", "command": ["tool", "build"]}
+CS_ROW = {"glob": "*.cs", "root_marker": ["*.sln", "*.slnx"], "command": ["dotnet", "build"]}
 TOP = os.path.normpath("/r")
 
 
@@ -325,6 +376,29 @@ class MatchingRootsTests(unittest.TestCase):
         rows = [dict(PY_ROW, command="tool build"), {"glob": "*.py", "command": ["tool"]}]
 
         self.assertEqual(guards.matching_roots(["a.py"], rows, TOP, isdir, listdir), [])
+
+    def test_list_marker_finds_slnx_root(self):
+        isdir, listdir = fake_tree({"": ["x.slnx", "a.cs"]})
+
+        roots = guards.matching_roots(["a.cs"], [CS_ROW], TOP, isdir, listdir)
+
+        self.assertEqual(roots, [(TOP, ("dotnet", "build"))])
+
+    def test_list_marker_finds_sln_root(self):
+        isdir, listdir = fake_tree({"": ["x.sln", "a.cs"]})
+
+        roots = guards.matching_roots(["a.cs"], [CS_ROW], TOP, isdir, listdir)
+
+        self.assertEqual(roots, [(TOP, ("dotnet", "build"))])
+
+    def test_invalid_root_markers_skip_the_row(self):
+        isdir, listdir = fake_tree({"": ["x.sln", "a.cs"]})
+
+        for marker in ([], ["*.sln", 3], 3):
+            with self.subTest(marker=marker):
+                rows = [dict(CS_ROW, root_marker=marker)]
+
+                self.assertEqual(guards.matching_roots(["a.cs"], rows, TOP, isdir, listdir), [])
 
 
 class TrimOutputTests(unittest.TestCase):
