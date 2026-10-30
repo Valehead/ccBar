@@ -273,6 +273,8 @@ def _cost_color(total, cfg):
 
 
 def _fmt_duration(seconds):
+    if 0 < seconds < 60:
+        return "<1m"
     minutes = max(0, int(seconds)) // 60
     hours, minutes = divmod(minutes, 60)
     days, hours = divmod(hours, 24)

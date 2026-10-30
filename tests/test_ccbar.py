@@ -804,8 +804,23 @@ class PromptCacheTextTests(unittest.TestCase):
 
 
 class FmtDurationTests(unittest.TestCase):
-    def test_under_a_minute_is_zero_minutes(self):
-        self.assertEqual(ccbar._fmt_duration(59), "0m")
+    def test_one_second_is_under_a_minute(self):
+        self.assertEqual(ccbar._fmt_duration(1), "<1m")
+
+    def test_fifty_nine_seconds_is_under_a_minute(self):
+        self.assertEqual(ccbar._fmt_duration(59), "<1m")
+
+    def test_zero_is_zero_minutes(self):
+        self.assertEqual(ccbar._fmt_duration(0), "0m")
+
+    def test_negative_is_zero_minutes(self):
+        self.assertEqual(ccbar._fmt_duration(-5), "0m")
+
+    def test_sixty_seconds_is_one_minute(self):
+        self.assertEqual(ccbar._fmt_duration(60), "1m")
+
+    def test_sixty_one_seconds_is_one_minute(self):
+        self.assertEqual(ccbar._fmt_duration(61), "1m")
 
     def test_hours_and_minutes(self):
         self.assertEqual(ccbar._fmt_duration(7800), "2h10m")
