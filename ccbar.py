@@ -31,6 +31,7 @@ DEFAULTS = {
         "worktree": True,
         "rate_limits": True,
         "prompt_cache": True,
+        "subagents": True,
     },
     "bar": {
         "width": 20,
@@ -98,6 +99,7 @@ DEFAULTS = {
 
 RATE_WINDOWS = (("5h", "five_hour"),)
 BRANCH_MAX_LEN = 30
+SUBAGENT_BAR_WIDTH = 5
 
 # ---------------------------------------------------------------------------
 # ANSI helpers
@@ -462,6 +464,73 @@ def render(data, cfg, git_info=None, events=None, now=None):
     return line1 + "\n" + line2
 
 
+def _subagent_row(task, cfg, columns, now_ms):
+    if not (
+        isinstance(task.get("id"), str)
+        and _is_number(task.get("tokenCount"))
+        and _is_number(task.get("startTime"))
+    ):
+        return None
+
+    def c(text, *codes):
+        return _color(text, *codes, cfg=cfg)
+
+    ascii_fallback = cfg.get("icons", {}).get("ascii_fallback", False)
+    sep = " - " if ascii_fallback else " · "
+    ellipsis = "..." if ascii_fallback else "…"
+
+    agent_type = task.get("agentType")
+    agent_type = _sanitize_label(agent_type, 40) if isinstance(agent_type, str) and agent_type else ""
+    label = task.get("label") or task.get("description")
+    # Model-written text, and content renders raw ANSI
+    label = _sanitize_label(label) if isinstance(label, str) else ""
+
+    tokens = _fmt_num(task["tokenCount"])
+    window = task.get("contextWindowSize")
+    if _is_number(window) and window > 0:
+        bar_cfg = cfg.get("bar", {})
+        filled_char = bar_cfg.get("filled_char", "█")
+        empty_char = bar_cfg.get("empty_char", "░")
+        pct = task["tokenCount"] / window * 100
+        filled = max(0, min(int(pct / 100 * SUBAGENT_BAR_WIDTH), SUBAGENT_BAR_WIDTH))
+        filled_text = filled_char * filled
+        empty_text = empty_char * (SUBAGENT_BAR_WIDTH - filled)
+        pct_text = f"{pct:.0f}% ({tokens})"
+        metrics_plain = f"{filled_text}{empty_text} {pct_text}"
+        bar_color = _pct_color(pct, cfg)
+        empty_color = cfg.get("colors", {}).get("bar_empty")
+        if empty_color:
+            bar = c(filled_text, bar_color) + c(empty_text, empty_color)
+        else:
+            bar = c(filled_text + empty_text, bar_color)
+        metrics = f"{bar} {c(pct_text, bar_color)}"
+    else:
+        metrics_plain = metrics = tokens
+    elapsed = _fmt_duration((now_ms - task["startTime"]) / 1000)
+
+    prefix = agent_type + sep if agent_type and label else agent_type
+    if _is_number(columns):
+        budget = int(columns) - len(prefix) - len("  " + metrics_plain + "  " + elapsed)
+        if budget <= len(ellipsis):
+            label = ""
+            prefix = agent_type
+        else:
+            label = _truncate(label, budget, ellipsis)
+
+    return prefix + label + "  " + metrics + "  " + elapsed
+
+
+def render_subagents(data, cfg, now_ms):
+    if not cfg.get("segments", {}).get("subagents", True):
+        return []
+    rows = []
+    for task in data.get("tasks") or []:
+        content = _subagent_row(_as_dict(task), cfg, data.get("columns"), now_ms)
+        if content is not None:
+            rows.append({"id": task["id"], "content": content})
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # Session events
 # ---------------------------------------------------------------------------
@@ -751,6 +820,17 @@ def main():
         except Exception as e:
             print(f"ccbar --stop-hook failed: {e!r}", file=sys.stderr)
             sys.exit(1)
+        sys.exit(0)
+
+    if "--subagents" in sys.argv:
+        raw = None
+        try:
+            raw = sys.stdin.read()
+            rows = render_subagents(json.loads(raw), load_config(), time.time() * 1000)
+            for row in rows:
+                print(json.dumps(row))
+        except Exception:
+            _log_render_error(raw)
         sys.exit(0)
 
     raw = None

@@ -47,6 +47,77 @@ class IsCcbarStopHookTests(unittest.TestCase):
         self.assertFalse(install.is_ccbar_stop_hook("notify.sh --on-stop"))
 
 
+class IsCcbarSubagentLineTests(unittest.TestCase):
+    def test_matches_unquoted_copy_command(self):
+        self.assertTrue(install.is_ccbar_subagent_line("py -3 ~/.claude/ccbar.py --subagents"))
+
+    def test_matches_quoted_in_place_command(self):
+        self.assertTrue(install.is_ccbar_subagent_line('py -3 "C:/dev/ccBar/ccbar.py" --subagents'))
+
+    def test_rejects_unrelated_command(self):
+        self.assertFalse(install.is_ccbar_subagent_line("~/.claude/subagent-statusline.sh"))
+
+    def test_rejects_stop_hook(self):
+        self.assertFalse(install.is_ccbar_subagent_line("py -3 ~/.claude/ccbar.py --stop-hook"))
+
+
+class BuildSubagentStatusLineTests(unittest.TestCase):
+    def test_appends_subagents_flag_without_refresh_interval(self):
+        line = install.build_subagent_status_line("py -3 ~/.claude/ccbar.py")
+
+        self.assertEqual(line, {"type": "command", "command": "py -3 ~/.claude/ccbar.py --subagents"})
+
+
+class ApplySubagentStatusLineTests(unittest.TestCase):
+    IN_PLACE_COMMAND = 'py -3 "C:/dev/ccBar/ccbar.py"'
+    OTHER_LINE = {"type": "command", "command": "~/.claude/subagent-statusline.sh"}
+
+    def test_adds_key_to_empty_settings(self):
+        settings = {}
+
+        action = install.apply_subagent_status_line(settings, self.IN_PLACE_COMMAND)
+
+        self.assertEqual(settings["subagentStatusLine"]["command"], self.IN_PLACE_COMMAND + " --subagents")
+        self.assertTrue(action.startswith("Added"))
+
+    def test_replaces_old_ccbar_value(self):
+        settings = {"subagentStatusLine": {"type": "command", "command": "py -3 ~/.claude/ccbar.py --subagents"}}
+
+        action = install.apply_subagent_status_line(settings, self.IN_PLACE_COMMAND)
+
+        self.assertEqual(settings["subagentStatusLine"]["command"], self.IN_PLACE_COMMAND + " --subagents")
+        self.assertTrue(action.startswith("Updated"))
+
+    def test_leaves_someone_elses_value_unchanged(self):
+        settings = {"subagentStatusLine": copy_of(self.OTHER_LINE)}
+
+        action = install.apply_subagent_status_line(settings, self.IN_PLACE_COMMAND)
+
+        self.assertEqual(settings["subagentStatusLine"], self.OTHER_LINE)
+        self.assertTrue(action.startswith("Kept"))
+
+
+class RemoveSubagentStatusLineTests(unittest.TestCase):
+    def test_removes_ccbar_value(self):
+        settings = {"subagentStatusLine": {"type": "command", "command": "py -3 ~/.claude/ccbar.py --subagents"}}
+
+        removed = install.remove_subagent_status_line(settings)
+
+        self.assertTrue(removed)
+        self.assertNotIn("subagentStatusLine", settings)
+
+    def test_keeps_someone_elses_value(self):
+        settings = {"subagentStatusLine": {"type": "command", "command": "~/.claude/subagent-statusline.sh"}}
+
+        removed = install.remove_subagent_status_line(settings)
+
+        self.assertFalse(removed)
+        self.assertIn("subagentStatusLine", settings)
+
+    def test_absent_key_returns_false(self):
+        self.assertFalse(install.remove_subagent_status_line({}))
+
+
 class IsGuardHookTests(unittest.TestCase):
     def test_matches_guard_command(self):
         self.assertTrue(install.is_guard_hook(GUARD_CMD))
@@ -259,6 +330,17 @@ class LoadSettingsTests(unittest.TestCase):
 
     def test_missing_file_gives_empty_dict(self):
         self.assertEqual(install.load_settings(), {})
+
+    def test_dry_run_shows_subagent_status_line_without_writing(self):
+        out = io.StringIO()
+
+        with mock.patch.object(install, "find_python", return_value=(["py", "-3"], "py -3")), \
+                contextlib.redirect_stdout(out):
+            install.install(dry_run=True, no_verify=True)
+
+        self.assertIn("subagentStatusLine", out.getvalue())
+        self.assertIn("--subagents", out.getvalue())
+        self.assertFalse(os.path.exists(self.settings))
 
 
 if __name__ == "__main__":

@@ -105,6 +105,14 @@ Segments with nothing to show are left out.
 
 Every switch is a boolean under `segments` in your [config](#configuration).
 
+### Subagent rows
+
+While subagents run, Claude Code lists them under the prompt. ccBar draws each row as the agent type, its current task, a 5-character context bar with percentage and tokens, and time since it started:
+
+`Explore · Find install hooks  ██░░░ 41% (82k)  3m`
+
+The bar uses the same characters, thresholds and colors as the status line. Without a known context window the row shows tokens only. The agent type needs Claude Code v2.1.293 or later. When the terminal is narrow, only the task text is cut. Switch off with `segments.subagents`; Claude Code then draws its default rows. If your `settings.json` already has a `subagentStatusLine` that isn't ccBar's, the installer leaves it alone.
+
 ### Session retro and handoff
 
 Both are on by default. The status line watches context usage; the Stop hook the installer registers acts on it at the end of Claude's next response.
@@ -240,7 +248,8 @@ The blocks below show the defaults.
   "fast": true,
   "worktree": true,
   "rate_limits": true,
-  "prompt_cache": true
+  "prompt_cache": true,
+  "subagents": true
 }
 ```
 
@@ -426,13 +435,13 @@ These keys no longer do anything. Unknown keys are ignored, so leaving them is h
 python install.py --uninstall
 ```
 
-Removes `statusLine`, the Stop hook and the guard hooks from `settings.json`, then asks before each further step: restoring `settings.json` from `settings.json.bak`, and removing `~/.claude/ccbar.py`, your config, the installed skills and the session state. Retro files and handoff plans are left in place.
+Removes `statusLine`, `subagentStatusLine` (when it is ccBar's), the Stop hook and the guard hooks from `settings.json`, then asks before each further step: restoring `settings.json` from `settings.json.bak`, and removing `~/.claude/ccbar.py`, your config, the installed skills and the session state. Retro files and handoff plans are left in place.
 
 ---
 
 ## Troubleshooting
 
-**Blank status line with no error.** The most common cause is `python` not being on PATH. The installer works around this by writing a working interpreter command into `settings.json`. If you installed manually, check that the `statusLine` command in `~/.claude/settings.json` points to a real Python. If the bar was working and went blank, check `~/.claude/ccbar-state/last-error.txt` for the traceback. Replay the input that caused it with `python ccbar.py < ~/.claude/ccbar-state/last-error-input.json`.
+**Blank status line with no error.** The most common cause is `python` not being on PATH. The installer works around this by writing a working interpreter command into `settings.json`. If you installed manually, check that the `statusLine` command in `~/.claude/settings.json` points to a real Python. If the bar was working and went blank, check `~/.claude/ccbar-state/last-error.txt` for the traceback. Replay the input that caused it with `python ccbar.py < ~/.claude/ccbar-state/last-error-input.json`. An input with a `tasks` array came from the subagent rows; replay it with `python ccbar.py --subagents < ...` instead.
 
 **Status line shows raw text or garbled characters.** Your terminal may not support UTF-8 block characters. Set `"filled_char": "#"`, `"empty_char": "-"` and `"ascii_fallback": true` in the config.
 
