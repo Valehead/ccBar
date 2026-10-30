@@ -178,7 +178,7 @@ Details:
 Does nothing until you add rows to `guards.build_gate.builds`. A row is:
 
 ```json
-{"glob": "*.cs", "root_marker": "*.sln", "command": ["dotnet", "build", "-v", "q", "-clp:ErrorsOnly"]}
+{"glob": "*.cs", "root_marker": ["*.sln", "*.slnx"], "command": ["dotnet", "build", "-v", "q", "-clp:ErrorsOnly"]}
 ```
 
 Before `git push` or `gh pr create`, the guard finds the files your unpushed commits change. Each file that matches a row's `glob` walks up from its directory to the repo root, and the first directory holding something that matches `root_marker` is its project root. The row's `command` runs there. If it fails, the push is blocked and Claude gets the last 40 lines of output and is told to fix the errors first.
@@ -189,7 +189,7 @@ Examples for several stacks. Keep only the rows for stacks you use:
 "guards": {
   "build_gate": {
     "builds": [
-      {"glob": "*.cs", "root_marker": "*.sln", "command": ["dotnet", "build", "-v", "q", "-clp:ErrorsOnly"]},
+      {"glob": "*.cs", "root_marker": ["*.sln", "*.slnx"], "command": ["dotnet", "build", "-v", "q", "-clp:ErrorsOnly"]},
       {"glob": "*.ts", "root_marker": "package.json", "command": ["npm", "run", "build"]},
       {"glob": "*.rs", "root_marker": "Cargo.toml", "command": ["cargo", "build", "--quiet"]},
       {"glob": "*.go", "root_marker": "go.mod", "command": ["go", "build", "./..."]}
@@ -202,6 +202,7 @@ The TypeScript row assumes your `package.json` has a `build` script. Plain `dotn
 
 Details:
 - `glob` and `root_marker` are `fnmatch` patterns matched against repo-relative paths, where `*` crosses `/`, so `*.cs` matches `src/a/b.cs`.
+- `root_marker` is one pattern or a list of patterns. The first directory holding anything that matches any of them is the root. Use `["*.sln", "*.slnx"]` rather than `"*.sln*"`, which also matches `.sln.DotSettings` files.
 - `command` is an argument list, not a shell string.
 - Unpushed commits are compared with the branch's upstream, or `origin/HEAD` when there is none. The build itself runs against the working tree.
 - The repo is the command's working directory, or the `<dir>` of a leading `cd <dir> &&` or of `git -C <dir> push`.

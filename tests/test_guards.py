@@ -279,6 +279,7 @@ class RunPostedTextTests(unittest.TestCase):
 
 
 PY_ROW = {"glob": "*.py", "root_marker": "setup.cfg", "command": ["tool", "build"]}
+CS_ROW = {"glob": "*.cs", "root_marker": ["*.sln", "*.slnx"], "command": ["dotnet", "build"]}
 TOP = os.path.normpath("/r")
 
 
@@ -362,6 +363,29 @@ class MatchingRootsTests(unittest.TestCase):
         rows = [dict(PY_ROW, command="tool build"), {"glob": "*.py", "command": ["tool"]}]
 
         self.assertEqual(guards.matching_roots(["a.py"], rows, TOP, isdir, listdir), [])
+
+    def test_list_marker_finds_slnx_root(self):
+        isdir, listdir = fake_tree({"": ["x.slnx", "a.cs"]})
+
+        roots = guards.matching_roots(["a.cs"], [CS_ROW], TOP, isdir, listdir)
+
+        self.assertEqual(roots, [(TOP, ("dotnet", "build"))])
+
+    def test_list_marker_finds_sln_root(self):
+        isdir, listdir = fake_tree({"": ["x.sln", "a.cs"]})
+
+        roots = guards.matching_roots(["a.cs"], [CS_ROW], TOP, isdir, listdir)
+
+        self.assertEqual(roots, [(TOP, ("dotnet", "build"))])
+
+    def test_invalid_root_markers_skip_the_row(self):
+        isdir, listdir = fake_tree({"": ["x.sln", "a.cs"]})
+
+        for marker in ([], ["*.sln", 3], 3):
+            with self.subTest(marker=marker):
+                rows = [dict(CS_ROW, root_marker=marker)]
+
+                self.assertEqual(guards.matching_roots(["a.cs"], rows, TOP, isdir, listdir), [])
 
 
 class TrimOutputTests(unittest.TestCase):
