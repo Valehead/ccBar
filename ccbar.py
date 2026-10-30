@@ -401,6 +401,10 @@ def render(data, cfg, git_info=None, events=None, now=None):
         cost_str = f"${total_cost:.{dec}f}"
         line1 += " | " + c(cost_str, _cost_color(total_cost, cfg))
 
+    cache_text = _prompt_cache_text(data, cfg, now, c) if segs.get("prompt_cache", True) else ""
+    if cache_text:
+        line1 += " | " + cache_text
+
     for name in EVENTS:
         if segs.get(name, True) and (events or {}).get(name, {}).get("fired"):
             label = f"{name} done" if icons.get("ascii_fallback", False) else f"{name} ✓"
@@ -456,9 +460,8 @@ def render(data, cfg, git_info=None, events=None, now=None):
         git_parts.append("/".join(parts))
 
     rate_text = _rate_limits_text(data, cfg, now, c) if segs.get("rate_limits", True) else ""
-    cache_text = _prompt_cache_text(data, cfg, now, c) if segs.get("prompt_cache", True) else ""
 
-    groups = (location, "  ".join(git_parts), rate_text, cache_text)
+    groups = (location, "  ".join(git_parts), rate_text)
     line2 = " | ".join(g for g in groups if g)
 
     return line1 + "\n" + line2

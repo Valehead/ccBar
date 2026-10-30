@@ -3,21 +3,26 @@
 install.py - ccBar installer. Safe to re-run after any update.
 
 Usage:
-  python install.py                Install or update ccBar
-  python install.py --in-place     Run ccbar.py from this clone instead of copying it
-                                   into ~/.claude (for machines that block scripts there)
-  python install.py --copy         Copy ccbar.py into ~/.claude (the default; switches
-                                   back from --in-place)
+  python install.py                Install or update ccBar (runs ccbar.py from this clone)
+  python install.py --install-direct
+                                   Copy ccbar.py into ~/.claude (for when the clone
+                                   won't stay put)
+  python install.py --install-inside-repo
+                                   Run ccbar.py from this clone (the default; switches
+                                   back from --install-direct)
   python install.py --dry-run      Show what would happen, don't write
   python install.py --no-verify    Skip self-test after install
   python install.py --reset-config Overwrite your config with the latest example
                                    (backs up your existing config first)
   python install.py --guards       Register the guard hooks (guards.py, always run
                                    from this clone)
+  python install.py --dotnet       Add the .NET build gate preset to your config and
+                                   register the guard hooks (implies --guards)
   python install.py --no-guards    Remove the guard hooks
   python install.py --uninstall    Remove ccBar (and its guard hooks) from settings.json
+  python install.py --help         Show this help and exit
 
-With neither --in-place nor --copy, the mode of the existing install is kept.
+With neither --install-inside-repo nor --install-direct, the mode of the existing install is kept.
 With neither --guards nor --no-guards, registered guard hooks are kept.
 """
 
@@ -41,6 +46,10 @@ SRC_SKILLS_DIR = os.path.join(SCRIPT_DIR, "skills")
 DEST_SKILLS_DIR = os.path.join(CLAUDE_DIR, "skills")
 STATE_DIR = os.path.join(CLAUDE_DIR, "ccbar-state")
 REFRESH_INTERVAL_S = 30
+KNOWN_FLAGS = {
+    "--install-direct", "--install-inside-repo", "--dry-run", "--no-verify", "--reset-config",
+    "--guards", "--dotnet", "--no-guards", "--uninstall", "--help", "-h",
+}
 # (event, matcher, flag, timeout_s)
 GUARD_HOOKS = (
     ("PostToolUse", "Edit|Write", "--line-endings", 10),
@@ -117,6 +126,45 @@ def save_settings(data, dry_run):
         f.write(content)
 
 
+def load_config_file():
+    try:
+        with open(DEST_CONFIG, "r", encoding="utf-8") as f:
+            config = json.load(f)
+    except (OSError, ValueError) as e:
+        _refuse_config(f"could not read {DEST_CONFIG}: {e}")
+    if not isinstance(config, dict):
+        _refuse_config(f"could not read {DEST_CONFIG}: expected a JSON object at the top level")
+    return config
+
+
+def _refuse_config(message):
+    print(f"ERROR: {message}", file=sys.stderr)
+    print("Fix the file or move it aside, then rerun. ccbar.config.json was left unchanged.", file=sys.stderr)
+    sys.exit(1)
+
+
+def save_config_file(config, dry_run, backup):
+    content = json.dumps(config, indent=2, ensure_ascii=False) + "\n"
+    if dry_run:
+        print(f"[dry-run] would write {DEST_CONFIG}:")
+        print(content)
+        return
+    if backup:
+        shutil.copy2(DEST_CONFIG, DEST_CONFIG_BAK)
+        print(f"  Backed up existing config to {DEST_CONFIG_BAK}")
+    with open(DEST_CONFIG, "w", encoding="utf-8") as f:
+        f.write(content)
+
+
+def add_build_preset(config, name):
+    """Append name to guards.build_gate.builds unless it's there. Return True if config changed."""
+    builds = config.setdefault("guards", {}).setdefault("build_gate", {}).setdefault("builds", [])
+    if name in builds:
+        return False
+    builds.append(name)
+    return True
+
+
 def skill_names():
     return sorted(
         name for name in os.listdir(SRC_SKILLS_DIR)
@@ -143,18 +191,20 @@ def build_subagent_status_line(status_command):
 
 
 def resolve_mode(settings, script_dir, args):
-    """Return True for in-place mode.
+    """Return True for inside-repo mode.
 
-    An explicit flag wins; otherwise keep the existing install's mode, so a
-    plain re-run after `git pull` doesn't flip an in-place machine to copy.
+    An explicit flag wins. Otherwise an existing direct install stays direct,
+    so a plain re-run doesn't flip it, and anything else (an inside-repo
+    install, no statusLine, or another tool's) runs from the clone.
     """
-    if "--copy" in args:
+    if "--install-direct" in args:
         return False
-    if "--in-place" in args:
+    if "--install-inside-repo" in args:
         return True
-    command = settings.get("statusLine", {}).get("command", "")
-    clone_script = script_dir.replace("\\", "/") + "/ccbar.py"
-    return clone_script.lower() in command.lower()
+    command = settings.get("statusLine", {}).get("command", "").lower()
+    clone_script = (script_dir.replace("\\", "/") + "/ccbar.py").lower()
+    is_direct = "ccbar.py" in command and clone_script not in command
+    return not is_direct
 
 
 def is_ccbar_stop_hook(command):
@@ -257,11 +307,12 @@ def remove_subagent_status_line(settings):
 def next_steps(dest_config, guards_registered, py_display):
     lines = ["Optional next steps:", f"  Customize:  {dest_config}"]
     if not guards_registered:
-        lines.append(f"  Guard hooks (line endings, posted text, build gate): {py_display} install.py --guards")
+        lines.append(f"  Guard hooks (line endings, posted text, build gate): {py_display} install.py --guards"
+                     "  (.NET projects: install.py --dotnet)")
     return lines
 
 
-def install(dry_run=False, no_verify=False, reset_config=False, in_place=False, guards=None):
+def install(dry_run=False, no_verify=False, reset_config=False, in_place=False, guards=None, dotnet=False):
     print("=== ccBar installer ===\n")
 
     py_cmd, py_display = find_python()
@@ -270,9 +321,9 @@ def install(dry_run=False, no_verify=False, reset_config=False, in_place=False, 
         sys.exit(1)
     print(f"  Python: {py_display}")
     if in_place:
-        print(f"  Mode: in-place (runs {SRC_SCRIPT})")
+        print(f"  Mode: inside repo (runs {SRC_SCRIPT})")
     else:
-        print(f"  Mode: copy (runs {DEST_SCRIPT})")
+        print(f"  Mode: direct (runs {DEST_SCRIPT})")
 
     status_command, stop_cmd = build_commands(py_cmd, in_place, SCRIPT_DIR)
     status_cmd = build_status_line(status_command)
@@ -326,6 +377,19 @@ def install(dry_run=False, no_verify=False, reset_config=False, in_place=False, 
     else:
         print(f"  Config preserved at {DEST_CONFIG}")
         print(f"    (pass --reset-config to overwrite; your current config will be backed up)")
+
+    if dotnet:
+        if dry_run and not os.path.isfile(DEST_CONFIG):
+            print(f"[dry-run] would add the dotnet build preset to {DEST_CONFIG}")
+        else:
+            config = load_config_file()
+            if not add_build_preset(config, "dotnet"):
+                print(f"  dotnet build preset already in {DEST_CONFIG}")
+            else:
+                # A config this run just wrote has nothing to back up, and a --reset-config backup must survive
+                save_config_file(config, dry_run, backup=config_existed and not reset_config)
+                if not dry_run:
+                    print(f"  Added the dotnet build preset to {DEST_CONFIG}")
 
     # Always update statusLine — picks up command or format changes across versions
     settings = load_settings()
@@ -424,23 +488,35 @@ def uninstall(dry_run=False):
 
 def main():
     args = sys.argv[1:]
+    if "--help" in args or "-h" in args:
+        print(__doc__.strip())
+        return
+    unknown = [a for a in args if a not in KNOWN_FLAGS]
+    if unknown:
+        print(f"ERROR: unknown option {', '.join(unknown)}. Nothing was installed.", file=sys.stderr)
+        print("Run `python install.py --help` to see every install option and how to use it.", file=sys.stderr)
+        sys.exit(2)
     dry_run = "--dry-run" in args
     no_verify = "--no-verify" in args
     reset_config = "--reset-config" in args
 
-    if "--in-place" in args and "--copy" in args:
-        print("ERROR: --in-place and --copy are mutually exclusive.", file=sys.stderr)
+    if "--install-inside-repo" in args and "--install-direct" in args:
+        print("ERROR: --install-inside-repo and --install-direct are mutually exclusive.", file=sys.stderr)
         sys.exit(2)
     if "--guards" in args and "--no-guards" in args:
         print("ERROR: --guards and --no-guards are mutually exclusive.", file=sys.stderr)
         sys.exit(2)
-    guards = True if "--guards" in args else False if "--no-guards" in args else None
+    dotnet = "--dotnet" in args
+    if dotnet and "--no-guards" in args:
+        print("ERROR: --dotnet and --no-guards are mutually exclusive.", file=sys.stderr)
+        sys.exit(2)
+    guards = True if "--guards" in args or dotnet else False if "--no-guards" in args else None
 
     if "--uninstall" in args:
         uninstall(dry_run=dry_run)
     else:
         in_place = resolve_mode(load_settings(), SCRIPT_DIR, args)
-        install(dry_run=dry_run, no_verify=no_verify, reset_config=reset_config, in_place=in_place, guards=guards)
+        install(dry_run=dry_run, no_verify=no_verify, reset_config=reset_config, in_place=in_place, guards=guards, dotnet=dotnet)
 
 
 if __name__ == "__main__":

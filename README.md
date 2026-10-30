@@ -11,8 +11,8 @@ Later in a long session, context and cost turn yellow and the retro and handoff 
 Every segment, with all the optional markers showing:
 
 ```
-[Claude Opus 4.8 · high]  ████████░░░░░░░░░░░░  41.2% (412k / 1M) | $1.2345 | retro ✓
-📁 ccBar ⎇ feat-x | 🌿 main*  +12/-3 | 5h 23% (2h10m) | cache 92% warm 3m
+[Claude Opus 4.8 · high]  ████████░░░░░░░░░░░░  41.2% (412k / 1M) | $1.2345 | cache 92% warm 3m | retro ✓
+📁 ccBar ⎇ feat-x | 🌿 main*  +12/-3 | 5h 23% (2h10m)
 ```
 
 **Zero token cost.** ccBar runs as a local subprocess. Claude never sees its input or output, so the status line adds no API cost and no context usage.
@@ -40,35 +40,37 @@ On Windows, `py -3 install.py` works too. Restart Claude Code afterwards.
 The installer:
 
 1. Finds a working Python 3 (preferring the Windows `py` launcher) and writes its command into the status line, so a missing `python` on PATH doesn't break the bar.
-2. Copies `ccbar.py` to `~/.claude/ccbar.py`.
+2. Points the status line at `ccbar.py` in the clone, so keep the clone where it is.
 3. Copies the `session-retro` and `session-handoff` skills into `~/.claude/skills/`.
 4. Copies `config.example.json` to `~/.claude/ccbar.config.json` if you don't have a config yet. An existing config is left alone.
 5. Backs up `~/.claude/settings.json` to `settings.json.bak`, then sets `statusLine` and registers ccBar's Stop hook, keeping every other key. `statusLine.refreshInterval` is set to 30 seconds, so the bar redraws while Claude is idle and countdowns keep ticking.
 6. Runs the self-test.
 7. Prints the config path and, if guard hooks aren't registered, the command to add them.
 
-### Locked-down machines
+### Installing direct
 
-If your machine blocks running scripts from `~/.claude`, install in place:
+To copy `ccbar.py` into `~/.claude` instead of running it from the clone:
 
 ```sh
-python install.py --in-place
+python install.py --install-direct
 ```
 
-The status line and Stop hook then run `ccbar.py` from the clone, so keep the clone where it is. Config, state and skills still live in `~/.claude`. If a copied `~/.claude/ccbar.py` is left over, the installer offers to remove it. Re-running the installer keeps whichever mode you picked; pass `--copy` to switch back.
+The clone can then move or be deleted, but a `git pull` only reaches the bar after you re-run the installer. Config, state and skills live in `~/.claude` in both modes. Re-running the installer keeps whichever mode is installed; pass `--install-inside-repo` to switch back. If a copied `~/.claude/ccbar.py` is left over after switching back, the installer offers to remove it.
 
 ### Installer options
 
 | Flag | Effect |
 |------|--------|
-| `--in-place` | Run `ccbar.py` from the clone instead of copying it to `~/.claude` |
-| `--copy` | Copy `ccbar.py` to `~/.claude` (the default mode) |
+| `--install-inside-repo` | Run `ccbar.py` from the clone (the default mode) |
+| `--install-direct` | Copy `ccbar.py` to `~/.claude` instead of running it from the clone |
 | `--guards` | Register the [guard hooks](#optional-guard-hooks) |
+| `--dotnet` | Add the `dotnet` [build gate](#build-gate) preset to your config and register the guard hooks (implies `--guards`) |
 | `--no-guards` | Remove the guard hooks |
 | `--reset-config` | Replace your config with `config.example.json`, backing yours up to `ccbar.config.json.bak` first |
 | `--dry-run` | Print what would change; write nothing |
 | `--no-verify` | Skip the self-test |
 | `--uninstall` | Remove ccBar from `settings.json` and offer to remove its files (see [Uninstall](#uninstall)) |
+| `--help`, `-h` | Print the installer's usage and exit |
 
 ---
 
@@ -88,6 +90,7 @@ Segments with nothing to show are left out.
 | Context bar: green up to 60%, yellow up to 80%, red above | `████████░░░░` | `segments.context_bar` |
 | Context used, as a percentage and in tokens | `41.2% (412k / 1M)` | `segments.context_pct` |
 | Session cost, an estimate from Claude Code, not your bill. Turns yellow from $10, red from $30 | `$1.2345` | `segments.cost` |
+| Prompt cache: hit ratio, warm (green, with time left before it expires) or cold (yellow). Appears after the first response and counts only the main conversation, not subagents | `cache 92% warm 3m` | `segments.prompt_cache` |
 | Retro marker, once the session retro has fired | `retro ✓` | `segments.retro` |
 | Handoff marker, once the session handoff has fired | `handoff ✓` | `segments.handoff` |
 
@@ -101,7 +104,6 @@ Segments with nothing to show are left out.
 | Dirty marker: anything uncommitted, untracked files included | `*` | `segments.git_dirty` |
 | Lines added and removed in tracked files compared with the last commit, staged and unstaged together | `+12/-3` | `segments.git_changes` |
 | Plan usage for the 5-hour window, with time until it resets. Colored by the context bar thresholds. Claude Code sends this only on Pro and Max plans, after the first response | `5h 23% (2h10m)` | `segments.rate_limits` |
-| Prompt cache: hit ratio, warm (green, with time left before it expires) or cold (yellow). Appears after the first response and counts only the main conversation, not subagents | `cache 92% warm 3m` | `segments.prompt_cache` |
 
 Every switch is a boolean under `segments` in your [config](#configuration).
 
@@ -189,6 +191,8 @@ Does nothing until you add rows to `guards.build_gate.builds`. A row is:
 ```json
 {"glob": "*.cs", "root_marker": ["*.sln", "*.slnx"], "command": ["dotnet", "build", "{marker}", "-v", "q", "-clp:ErrorsOnly"]}
 ```
+
+A row can also be a preset name. `"dotnet"` stands for the .NET row above, so fixes to it reach you on `git pull`. `python install.py --dotnet` adds `"dotnet"` to your `builds` and registers the guard hooks in one step. To stop using it, remove `"dotnet"` from `builds`. An unknown name is skipped.
 
 Before `git push` or `gh pr create`, the guard finds the files your unpushed commits change. Each file that matches a row's `glob` walks up from its directory to the repo root, and the first directory holding something that matches `root_marker` is its project root. The row's `command` runs there. If it fails, the push is blocked and Claude gets the last 40 lines of output and is told to fix the errors first.
 
@@ -403,7 +407,7 @@ These keys take effect only after `install.py --guards`.
 
 - `enabled: false` switches one guard off without reinstalling.
 - `banned`: literal substrings to block in posted text. Empty does nothing. See [Posted text](#posted-text).
-- `builds`: build gate rows. Empty does nothing. See [Build gate](#build-gate).
+- `builds`: build gate rows or preset names such as `"dotnet"`. Empty does nothing. See [Build gate](#build-gate).
 
 ---
 
@@ -417,6 +421,8 @@ python install.py
 Re-running the installer keeps your install mode, your config and your guard hooks, and refreshes everything else. Skills are copied, not linked, so re-running is also what updates them, in both modes. Restart Claude Code afterwards.
 
 ### Upgrading from an older ccBar
+
+The install mode flags were renamed to `--install-inside-repo` and `--install-direct` (see [Installer options](#installer-options)), and a fresh install now runs from the clone.
 
 These keys no longer do anything. Unknown keys are ignored, so leaving them is harmless, but you can delete them:
 
