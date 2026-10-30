@@ -99,7 +99,7 @@ def load_settings():
 
 def _refuse_settings(message):
     print(f"ERROR: {message}", file=sys.stderr)
-    print("Fix the file or move it aside, then rerun. settings.json was left unchanged.",file=sys.stderr)
+    print("Fix the file or move it aside, then rerun. settings.json was left unchanged.", file=sys.stderr)
     sys.exit(1)
 
 

@@ -108,6 +108,8 @@ class IsPostingCommandTests(unittest.TestCase):
             "az devops invoke --area git --resource pullRequestThreads --in-file t.json",
             "az rest --method post --uri https://dev.azure.com/o/p/_apis/git/repositories/r/pullRequests/1/threads?api-version=7.1 --body x",
             "az rest --method post --uri https://dev.azure.com/o/p/_apis/wit/workItems/5/comments?api-version=7.1-preview.4 --body x",
+            '$uri = "https://dev.azure.com/o/p/_apis/git/repositories/r/pullRequests/1/threads"; az rest --method post --uri $uri --body x',
+            "az rest --method post --uri https://dev.azure.com/o/p/_apis/git/repositories/r/pullRequests/1/Threads --body x",
         )
 
         for command in commands:
@@ -262,6 +264,17 @@ class RunPostedTextTests(unittest.TestCase):
 
         with contextlib.redirect_stderr(io.StringIO()):
             code = guards.run_posted_text(self.payload(command, cwd=self.tmp.name), posted_text_cfg())
+
+        self.assertEqual(code, 2)
+
+    def test_powershell_uri_variable_before_az_rest_with_banned_body_file_returns_2(self):
+        command = (
+            '$uri = "https://dev.azure.com/o/p/_apis/git/repositories/r/pullRequests/1/threads?api-version=7.1"; '
+            'az rest --method post --uri $uri --body "@b.md"'
+        )
+
+        with contextlib.redirect_stderr(io.StringIO()):
+            code = guards.run_posted_text(self.payload(command, tool_name="PowerShell", cwd=self.tmp.name), posted_text_cfg())
 
         self.assertEqual(code, 2)
 

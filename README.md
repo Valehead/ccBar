@@ -166,7 +166,7 @@ Before a posting command runs, the guard checks the command and any body file it
 
 Details:
 - Entries are literal substrings, not patterns.
-- Posting commands: `gh pr` and `gh issue` `create`, `edit`, `comment` and `review`; `gh api` calls to a `reviews` or `comments` endpoint; `az repos pr create|update`; `az boards work-item create|update`; `az devops invoke` when `--resource` names threads or comments; and `az rest` calls to a `threads` or `comments` URI.
+- Posting commands: `gh pr` and `gh issue` `create`, `edit`, `comment` and `review`; `gh api` calls to a `reviews` or `comments` endpoint; `az repos pr create|update`; `az boards work-item create|update`; `az devops invoke` when `--resource` names threads or comments; and any command that runs `az rest` and names a `threads` or `comments` URI anywhere, in any case (so a PowerShell `$uri` set before the call counts).
 - Body files: `--body-file`, `-F`, `--input`, `--in-file`, `key=@file` and `@file`.
 - Runs before every Bash and PowerShell command (Claude on Windows can post through either). Any other command costs one regex search.
 
