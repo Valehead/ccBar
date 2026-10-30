@@ -189,7 +189,7 @@ Details:
 Does nothing until you add rows to `guards.build_gate.builds`. A row is:
 
 ```json
-{"glob": "*.cs", "root_marker": ["*.sln", "*.slnx"], "command": ["dotnet", "build", "{marker}", "-v", "q", "-clp:ErrorsOnly"]}
+{"glob": ["*.cs", "*.csproj", "*.props", "*.targets"], "root_marker": ["*.sln", "*.slnx"], "command": ["dotnet", "build", "{marker}", "-nologo", "-v", "q", "-clp:ErrorsOnly"]}
 ```
 
 A row can also be a preset name. `"dotnet"` stands for the .NET row above, so fixes to it reach you on `git pull`. `python install.py --dotnet` adds `"dotnet"` to your `builds` and registers the guard hooks in one step. To stop using it, remove `"dotnet"` from `builds`. An unknown name is skipped.
@@ -202,7 +202,7 @@ Examples for several stacks. Keep only the rows for stacks you use:
 "guards": {
   "build_gate": {
     "builds": [
-      {"glob": "*.cs", "root_marker": ["*.sln", "*.slnx"], "command": ["dotnet", "build", "{marker}", "-v", "q", "-clp:ErrorsOnly"]},
+      {"glob": ["*.cs", "*.csproj", "*.props", "*.targets"], "root_marker": ["*.sln", "*.slnx"], "command": ["dotnet", "build", "{marker}", "-nologo", "-v", "q", "-clp:ErrorsOnly"]},
       {"glob": "*.ts", "root_marker": "package.json", "command": ["npm", "run", "build"]},
       {"glob": "*.rs", "root_marker": "Cargo.toml", "command": ["cargo", "build", "--quiet"]},
       {"glob": "*.go", "root_marker": "go.mod", "command": ["go", "build", "./..."]}
@@ -215,12 +215,14 @@ The TypeScript row assumes your `package.json` has a `build` script. `dotnet bui
 
 Details:
 - `glob` and `root_marker` are `fnmatch` patterns matched against repo-relative paths, where `*` crosses `/`, so `*.cs` matches `src/a/b.cs`.
+- `glob` is one pattern or a list of patterns. A file matching any of them counts. The .NET row lists project and MSBuild files too, so a package bump in a `.csproj` or an edit to `Directory.Build.props` builds even when no `.cs` file changed.
 - `root_marker` is one pattern or a list of patterns. The first directory holding anything that matches any of them is the root. Use `["*.sln", "*.slnx"]` rather than `"*.sln*"`, which also matches `.sln.DotSettings` files.
 - `command` is an argument list, not a shell string.
 - `{marker}` in `command` is replaced with each file in the root that matches `root_marker`, and the command runs once per file. Use it when a root can hold more than one solution, since a bare `dotnet build` refuses to pick one (MSB1011). When two matches share a base name, such as `MyApp.sln` and `MyApp.slnx`, only the one matched by the earlier pattern builds, so `["*.sln", "*.slnx"]` prefers the `.sln`. Rows without `{marker}` run once per root.
 - Unpushed commits are compared with the branch's upstream, or `origin/HEAD` when there is none. The build itself runs against the working tree.
 - The repo is the command's working directory, or the `<dir>` of a leading `cd <dir> &&` or of `git -C <dir> push`.
 - Each project root builds once per push, or once per marker file with `{marker}`. Each build has a timeout of 840 seconds.
+- The root search only walks up. A `Directory.Build.props` at the repo root with the solutions in subfolders below it finds no root, so changing only that file builds nothing.
 - Fails open: a build tool that isn't on PATH, a timeout, or a git failure lets the push through with one warning line.
 - Any command that isn't a push costs one regex search.
 

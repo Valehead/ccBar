@@ -294,6 +294,7 @@ class RunPostedTextTests(unittest.TestCase):
 PY_ROW = {"glob": "*.py", "root_marker": "setup.cfg", "command": ["tool", "build"]}
 CS_ROW = {"glob": "*.cs", "root_marker": ["*.sln", "*.slnx"], "command": ["dotnet", "build"]}
 CS_MARKER_ROW = dict(CS_ROW, command=["dotnet", "build", "{marker}"])
+DOTNET_A_SLN = ("dotnet", "build", "A.sln", "-nologo", "-v", "q", "-clp:ErrorsOnly")
 TOP = os.path.normpath("/r")
 
 
@@ -468,7 +469,50 @@ class MatchingRootsTests(unittest.TestCase):
 
         roots = guards.matching_roots(["a.cs"], ["dotnet"], TOP, isdir, listdir)
 
-        self.assertEqual(roots, [(TOP, ("dotnet", "build", "A.sln", "-v", "q", "-clp:ErrorsOnly"))])
+        self.assertEqual(roots, [(TOP, DOTNET_A_SLN)])
+
+    def test_list_glob_matches_each_pattern(self):
+        isdir, listdir = fake_tree({"": ["setup.cfg", "a.py", "b.pyi"]})
+        row = dict(PY_ROW, glob=["*.py", "*.pyi"])
+
+        for path in ("a.py", "b.pyi"):
+            with self.subTest(path=path):
+                self.assertEqual(guards.matching_roots([path], [row], TOP, isdir, listdir), [(TOP, ("tool", "build"))])
+
+    def test_invalid_globs_skip_the_row(self):
+        isdir, listdir = fake_tree({"": ["setup.cfg", "a.py"]})
+
+        for glob in ([], ["*.py", 3], 3, None):
+            with self.subTest(glob=glob):
+                rows = [dict(PY_ROW, glob=glob)]
+
+                self.assertEqual(guards.matching_roots(["a.py"], rows, TOP, isdir, listdir), [])
+
+    def test_dotnet_preset_builds_on_project_file_only_change(self):
+        isdir, listdir = fake_tree({"": ["A.sln", "src"], "src": ["App.csproj"]})
+
+        roots = guards.matching_roots(["src/App.csproj"], ["dotnet"], TOP, isdir, listdir)
+
+        self.assertEqual(roots, [(TOP, DOTNET_A_SLN)])
+
+    def test_dotnet_preset_builds_on_props_and_targets_changes(self):
+        isdir, listdir = fake_tree({"": ["A.sln", "Directory.Build.props", "Directory.Build.targets"]})
+
+        for path in ("Directory.Build.props", "Directory.Packages.props", "Directory.Build.targets"):
+            with self.subTest(path=path):
+                self.assertEqual(guards.matching_roots([path], ["dotnet"], TOP, isdir, listdir), [(TOP, DOTNET_A_SLN)])
+
+    def test_dotnet_preset_cs_and_csproj_under_one_root_build_once(self):
+        isdir, listdir = fake_tree({"": ["A.sln", "src"], "src": ["App.csproj", "a.cs"]})
+
+        roots = guards.matching_roots(["src/a.cs", "src/App.csproj"], ["dotnet"], TOP, isdir, listdir)
+
+        self.assertEqual(roots, [(TOP, DOTNET_A_SLN)])
+
+    def test_dotnet_preset_root_props_with_solutions_below_builds_nothing(self):
+        isdir, listdir = fake_tree({"": ["Directory.Build.props", "app"], "app": ["A.sln"]})
+
+        self.assertEqual(guards.matching_roots(["Directory.Build.props"], ["dotnet"], TOP, isdir, listdir), [])
 
     def test_unknown_preset_name_is_skipped(self):
         isdir, listdir = fake_tree({"": ["A.sln", "a.cs"]})
@@ -481,7 +525,7 @@ class MatchingRootsTests(unittest.TestCase):
         roots = guards.matching_roots(["a.cs", "a.py"], ["dotnet", PY_ROW], TOP, isdir, listdir)
 
         self.assertEqual(roots, [
-            (TOP, ("dotnet", "build", "A.sln", "-v", "q", "-clp:ErrorsOnly")),
+            (TOP, DOTNET_A_SLN),
             (TOP, ("tool", "build")),
         ])
 
@@ -491,7 +535,7 @@ class MatchingRootsTests(unittest.TestCase):
 
         roots = guards.matching_roots(["a.cs"], rows, TOP, isdir, listdir)
 
-        self.assertEqual(roots, [(TOP, ("dotnet", "build", "A.sln", "-v", "q", "-clp:ErrorsOnly"))])
+        self.assertEqual(roots, [(TOP, DOTNET_A_SLN)])
 
 
 class TrimOutputTests(unittest.TestCase):
