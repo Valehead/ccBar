@@ -1,4 +1,4 @@
-import contextlib, io, json, os, sys, tempfile, unittest
+import contextlib, io, json, os, re, sys, tempfile, unittest
 from unittest import mock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import install
@@ -279,6 +279,38 @@ class ResolveModeTests(unittest.TestCase):
 
     def test_match_is_case_insensitive(self):
         self.assertTrue(install.resolve_mode(IN_PLACE_STATUS, "c:\\DEV\\ccbar", []))
+
+
+class HelpTests(unittest.TestCase):
+    def test_help_prints_usage_and_installs_nothing(self):
+        for flag in ("--help", "-h"):
+            with self.subTest(flag=flag):
+                out = io.StringIO()
+                with mock.patch.object(sys, "argv", ["install.py", flag]), \
+                        mock.patch.object(install, "install") as run_install, \
+                        contextlib.redirect_stdout(out):
+                    install.main()
+
+                self.assertIn("--install-direct", out.getvalue())
+                run_install.assert_not_called()
+
+    def test_unknown_flag_stops_before_installing_and_points_at_help(self):
+        err = io.StringIO()
+        with mock.patch.object(sys, "argv", ["install.py", "--dry-run", "--copy"]), \
+                mock.patch.object(install, "install") as run_install, \
+                contextlib.redirect_stderr(err):
+            with self.assertRaises(SystemExit) as raised:
+                install.main()
+
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("--copy", err.getvalue())
+        self.assertIn("--help", err.getvalue())
+        run_install.assert_not_called()
+
+    def test_every_documented_flag_is_known(self):
+        documented = set(re.findall(r"--[a-z-]+", install.__doc__))
+
+        self.assertLessEqual(documented, install.KNOWN_FLAGS)
 
 
 class AddBuildPresetTests(unittest.TestCase):

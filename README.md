@@ -70,6 +70,7 @@ The clone can then move or be deleted, but a `git pull` only reaches the bar aft
 | `--dry-run` | Print what would change; write nothing |
 | `--no-verify` | Skip the self-test |
 | `--uninstall` | Remove ccBar from `settings.json` and offer to remove its files (see [Uninstall](#uninstall)) |
+| `--help`, `-h` | Print the installer's usage and exit |
 
 ---
 

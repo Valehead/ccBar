@@ -20,6 +20,7 @@ Usage:
                                    register the guard hooks (implies --guards)
   python install.py --no-guards    Remove the guard hooks
   python install.py --uninstall    Remove ccBar (and its guard hooks) from settings.json
+  python install.py --help         Show this help and exit
 
 With neither --install-inside-repo nor --install-direct, the mode of the existing install is kept.
 With neither --guards nor --no-guards, registered guard hooks are kept.
@@ -45,6 +46,10 @@ SRC_SKILLS_DIR = os.path.join(SCRIPT_DIR, "skills")
 DEST_SKILLS_DIR = os.path.join(CLAUDE_DIR, "skills")
 STATE_DIR = os.path.join(CLAUDE_DIR, "ccbar-state")
 REFRESH_INTERVAL_S = 30
+KNOWN_FLAGS = {
+    "--install-direct", "--install-inside-repo", "--dry-run", "--no-verify", "--reset-config",
+    "--guards", "--dotnet", "--no-guards", "--uninstall", "--help", "-h",
+}
 # (event, matcher, flag, timeout_s)
 GUARD_HOOKS = (
     ("PostToolUse", "Edit|Write", "--line-endings", 10),
@@ -483,6 +488,14 @@ def uninstall(dry_run=False):
 
 def main():
     args = sys.argv[1:]
+    if "--help" in args or "-h" in args:
+        print(__doc__.strip())
+        return
+    unknown = [a for a in args if a not in KNOWN_FLAGS]
+    if unknown:
+        print(f"ERROR: unknown option {', '.join(unknown)}. Nothing was installed.", file=sys.stderr)
+        print("Run `python install.py --help` to see every install option and how to use it.", file=sys.stderr)
+        sys.exit(2)
     dry_run = "--dry-run" in args
     no_verify = "--no-verify" in args
     reset_config = "--reset-config" in args
