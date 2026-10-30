@@ -3,11 +3,13 @@
 install.py - ccBar installer. Safe to re-run after any update.
 
 Usage:
-  python install.py                Install or update ccBar
-  python install.py --in-place     Run ccbar.py from this clone instead of copying it
-                                   into ~/.claude (for machines that block scripts there)
-  python install.py --copy         Copy ccbar.py into ~/.claude (the default; switches
-                                   back from --in-place)
+  python install.py                Install or update ccBar (runs ccbar.py from this clone)
+  python install.py --install-direct
+                                   Copy ccbar.py into ~/.claude (for when the clone
+                                   won't stay put)
+  python install.py --install-inside-repo
+                                   Run ccbar.py from this clone (the default; switches
+                                   back from --install-direct)
   python install.py --dry-run      Show what would happen, don't write
   python install.py --no-verify    Skip self-test after install
   python install.py --reset-config Overwrite your config with the latest example
@@ -17,7 +19,7 @@ Usage:
   python install.py --no-guards    Remove the guard hooks
   python install.py --uninstall    Remove ccBar (and its guard hooks) from settings.json
 
-With neither --in-place nor --copy, the mode of the existing install is kept.
+With neither --install-inside-repo nor --install-direct, the mode of the existing install is kept.
 With neither --guards nor --no-guards, registered guard hooks are kept.
 """
 
@@ -143,18 +145,20 @@ def build_subagent_status_line(status_command):
 
 
 def resolve_mode(settings, script_dir, args):
-    """Return True for in-place mode.
+    """Return True for inside-repo mode.
 
-    An explicit flag wins; otherwise keep the existing install's mode, so a
-    plain re-run after `git pull` doesn't flip an in-place machine to copy.
+    An explicit flag wins. Otherwise an existing direct install stays direct,
+    so a plain re-run doesn't flip it, and anything else (an inside-repo
+    install, no statusLine, or another tool's) runs from the clone.
     """
-    if "--copy" in args:
+    if "--install-direct" in args:
         return False
-    if "--in-place" in args:
+    if "--install-inside-repo" in args:
         return True
-    command = settings.get("statusLine", {}).get("command", "")
-    clone_script = script_dir.replace("\\", "/") + "/ccbar.py"
-    return clone_script.lower() in command.lower()
+    command = settings.get("statusLine", {}).get("command", "").lower()
+    clone_script = (script_dir.replace("\\", "/") + "/ccbar.py").lower()
+    is_direct = "ccbar.py" in command and clone_script not in command
+    return not is_direct
 
 
 def is_ccbar_stop_hook(command):
@@ -270,9 +274,9 @@ def install(dry_run=False, no_verify=False, reset_config=False, in_place=False, 
         sys.exit(1)
     print(f"  Python: {py_display}")
     if in_place:
-        print(f"  Mode: in-place (runs {SRC_SCRIPT})")
+        print(f"  Mode: inside repo (runs {SRC_SCRIPT})")
     else:
-        print(f"  Mode: copy (runs {DEST_SCRIPT})")
+        print(f"  Mode: direct (runs {DEST_SCRIPT})")
 
     status_command, stop_cmd = build_commands(py_cmd, in_place, SCRIPT_DIR)
     status_cmd = build_status_line(status_command)
@@ -428,8 +432,8 @@ def main():
     no_verify = "--no-verify" in args
     reset_config = "--reset-config" in args
 
-    if "--in-place" in args and "--copy" in args:
-        print("ERROR: --in-place and --copy are mutually exclusive.", file=sys.stderr)
+    if "--install-inside-repo" in args and "--install-direct" in args:
+        print("ERROR: --install-inside-repo and --install-direct are mutually exclusive.", file=sys.stderr)
         sys.exit(2)
     if "--guards" in args and "--no-guards" in args:
         print("ERROR: --guards and --no-guards are mutually exclusive.", file=sys.stderr)

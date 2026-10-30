@@ -40,29 +40,29 @@ On Windows, `py -3 install.py` works too. Restart Claude Code afterwards.
 The installer:
 
 1. Finds a working Python 3 (preferring the Windows `py` launcher) and writes its command into the status line, so a missing `python` on PATH doesn't break the bar.
-2. Copies `ccbar.py` to `~/.claude/ccbar.py`.
+2. Points the status line at `ccbar.py` in the clone, so keep the clone where it is.
 3. Copies the `session-retro` and `session-handoff` skills into `~/.claude/skills/`.
 4. Copies `config.example.json` to `~/.claude/ccbar.config.json` if you don't have a config yet. An existing config is left alone.
 5. Backs up `~/.claude/settings.json` to `settings.json.bak`, then sets `statusLine` and registers ccBar's Stop hook, keeping every other key. `statusLine.refreshInterval` is set to 30 seconds, so the bar redraws while Claude is idle and countdowns keep ticking.
 6. Runs the self-test.
 7. Prints the config path and, if guard hooks aren't registered, the command to add them.
 
-### Locked-down machines
+### Installing direct
 
-If your machine blocks running scripts from `~/.claude`, install in place:
+To copy `ccbar.py` into `~/.claude` instead of running it from the clone:
 
 ```sh
-python install.py --in-place
+python install.py --install-direct
 ```
 
-The status line and Stop hook then run `ccbar.py` from the clone, so keep the clone where it is. Config, state and skills still live in `~/.claude`. If a copied `~/.claude/ccbar.py` is left over, the installer offers to remove it. Re-running the installer keeps whichever mode you picked; pass `--copy` to switch back.
+The clone can then move or be deleted, but a `git pull` only reaches the bar after you re-run the installer. Config, state and skills live in `~/.claude` in both modes. Re-running the installer keeps whichever mode is installed; pass `--install-inside-repo` to switch back. If a copied `~/.claude/ccbar.py` is left over after switching back, the installer offers to remove it.
 
 ### Installer options
 
 | Flag | Effect |
 |------|--------|
-| `--in-place` | Run `ccbar.py` from the clone instead of copying it to `~/.claude` |
-| `--copy` | Copy `ccbar.py` to `~/.claude` (the default mode) |
+| `--install-inside-repo` | Run `ccbar.py` from the clone (the default mode) |
+| `--install-direct` | Copy `ccbar.py` to `~/.claude` instead of running it from the clone |
 | `--guards` | Register the [guard hooks](#optional-guard-hooks) |
 | `--no-guards` | Remove the guard hooks |
 | `--reset-config` | Replace your config with `config.example.json`, backing yours up to `ccbar.config.json.bak` first |
@@ -417,6 +417,8 @@ python install.py
 Re-running the installer keeps your install mode, your config and your guard hooks, and refreshes everything else. Skills are copied, not linked, so re-running is also what updates them, in both modes. Restart Claude Code afterwards.
 
 ### Upgrading from an older ccBar
+
+The install mode flags were renamed to `--install-inside-repo` and `--install-direct` (see [Installer options](#installer-options)), and a fresh install now runs from the clone.
 
 These keys no longer do anything. Unknown keys are ignored, so leaving them is harmless, but you can delete them:
 

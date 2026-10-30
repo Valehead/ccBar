@@ -5,6 +5,7 @@ import install
 
 CLONE_DIR = "C:\\dev\\ccBar"
 IN_PLACE_STATUS = {"statusLine": {"type": "command", "command": 'py -3 "C:/dev/ccBar/ccbar.py"'}}
+DIRECT_STATUS = {"statusLine": {"type": "command", "command": "py -3 ~/.claude/ccbar.py"}}
 ASYNC_GROUP = {"hooks": [{"type": "command", "command": "notify.sh", "async": True}]}
 LINT_GROUP = {"matcher": "Edit", "hooks": [{"type": "command", "command": "lint.sh"}]}
 GUARD_CMD = 'py -3 "C:/dev/ccBar/guards.py" --line-endings'
@@ -260,10 +261,21 @@ class ResolveModeTests(unittest.TestCase):
         self.assertTrue(install.resolve_mode(IN_PLACE_STATUS, CLONE_DIR, []))
 
     def test_copy_flag_overrides_existing_in_place(self):
-        self.assertFalse(install.resolve_mode(IN_PLACE_STATUS, CLONE_DIR, ["--copy"]))
+        self.assertFalse(install.resolve_mode(IN_PLACE_STATUS, CLONE_DIR, ["--install-direct"]))
 
-    def test_no_status_line_and_no_flag_is_copy(self):
-        self.assertFalse(install.resolve_mode({}, CLONE_DIR, []))
+    def test_inside_repo_flag_overrides_existing_direct(self):
+        self.assertTrue(install.resolve_mode(DIRECT_STATUS, CLONE_DIR, ["--install-inside-repo"]))
+
+    def test_no_status_line_and_no_flag_is_inside_repo(self):
+        self.assertTrue(install.resolve_mode({}, CLONE_DIR, []))
+
+    def test_existing_direct_status_line_stays_direct(self):
+        self.assertFalse(install.resolve_mode(DIRECT_STATUS, CLONE_DIR, []))
+
+    def test_non_ccbar_status_line_and_no_flag_is_inside_repo(self):
+        settings = {"statusLine": {"type": "command", "command": "starship statusline"}}
+
+        self.assertTrue(install.resolve_mode(settings, CLONE_DIR, []))
 
     def test_match_is_case_insensitive(self):
         self.assertTrue(install.resolve_mode(IN_PLACE_STATUS, "c:\\DEV\\ccbar", []))
