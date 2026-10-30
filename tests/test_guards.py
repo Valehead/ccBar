@@ -293,6 +293,7 @@ class RunPostedTextTests(unittest.TestCase):
 
 PY_ROW = {"glob": "*.py", "root_marker": "setup.cfg", "command": ["tool", "build"]}
 CS_ROW = {"glob": "*.cs", "root_marker": ["*.sln", "*.slnx"], "command": ["dotnet", "build"]}
+CS_MARKER_ROW = dict(CS_ROW, command=["dotnet", "build", "{marker}"])
 TOP = os.path.normpath("/r")
 
 
@@ -337,6 +338,25 @@ class PushDirTests(unittest.TestCase):
 
     def test_non_posix_keeps_backslash_dir(self):
         self.assertEqual(guards.push_dir('git -C "C:\\r" push', "C:\\w", False), os.path.join("C:\\w", "C:\\r"))
+
+
+class MarkerFilesTests(unittest.TestCase):
+    def test_returns_each_matching_file_sorted(self):
+        self.assertEqual(guards.marker_files(["B.slnx", "A.slnx", "x.cs"], ["*.sln", "*.slnx"]), ["A.slnx", "B.slnx"])
+
+    def test_same_base_name_keeps_earlier_pattern(self):
+        self.assertEqual(guards.marker_files(["MyApp.sln", "MyApp.slnx"], ["*.sln", "*.slnx"]), ["MyApp.sln"])
+
+    def test_pattern_order_sets_the_tie_winner(self):
+        self.assertEqual(guards.marker_files(["MyApp.sln", "MyApp.slnx"], ["*.slnx", "*.sln"]), ["MyApp.slnx"])
+
+    def test_tie_dedupe_keeps_other_base_names(self):
+        entries = ["MyApp.sln", "MyApp.slnx", "Other.slnx"]
+
+        self.assertEqual(guards.marker_files(entries, ["*.sln", "*.slnx"]), ["MyApp.sln", "Other.slnx"])
+
+    def test_pattern_does_not_match_longer_extension(self):
+        self.assertEqual(guards.marker_files(["MyApp.sln.DotSettings", "MyApp.sln"], ["*.sln"]), ["MyApp.sln"])
 
 
 class MatchingRootsTests(unittest.TestCase):
@@ -399,6 +419,49 @@ class MatchingRootsTests(unittest.TestCase):
                 rows = [dict(CS_ROW, root_marker=marker)]
 
                 self.assertEqual(guards.matching_roots(["a.cs"], rows, TOP, isdir, listdir), [])
+
+    def test_marker_command_gives_one_pair_per_solution(self):
+        isdir, listdir = fake_tree({"": ["B.slnx", "A.slnx", "a.cs"]})
+
+        roots = guards.matching_roots(["a.cs"], [CS_MARKER_ROW], TOP, isdir, listdir)
+
+        self.assertEqual(roots, [(TOP, ("dotnet", "build", "A.slnx")), (TOP, ("dotnet", "build", "B.slnx"))])
+
+    def test_marker_command_with_one_solution_substitutes_its_name(self):
+        isdir, listdir = fake_tree({"": ["x.sln", "a.cs"]})
+
+        roots = guards.matching_roots(["a.cs"], [CS_MARKER_ROW], TOP, isdir, listdir)
+
+        self.assertEqual(roots, [(TOP, ("dotnet", "build", "x.sln"))])
+
+    def test_marker_command_builds_one_of_same_named_solutions(self):
+        isdir, listdir = fake_tree({"": ["MyApp.slnx", "MyApp.sln", "a.cs"]})
+
+        roots = guards.matching_roots(["a.cs"], [CS_MARKER_ROW], TOP, isdir, listdir)
+
+        self.assertEqual(roots, [(TOP, ("dotnet", "build", "MyApp.sln"))])
+
+    def test_marker_inside_a_larger_argument_is_substituted(self):
+        isdir, listdir = fake_tree({"": ["x.sln", "a.cs"]})
+        row = dict(CS_ROW, command=["dotnet", "build", "--project={marker}"])
+
+        roots = guards.matching_roots(["a.cs"], [row], TOP, isdir, listdir)
+
+        self.assertEqual(roots, [(TOP, ("dotnet", "build", "--project=x.sln"))])
+
+    def test_marker_command_with_two_files_under_one_root_has_no_duplicates(self):
+        isdir, listdir = fake_tree({"": ["A.slnx", "B.slnx", "a.cs", "b.cs"]})
+
+        roots = guards.matching_roots(["a.cs", "b.cs"], [CS_MARKER_ROW], TOP, isdir, listdir)
+
+        self.assertEqual(roots, [(TOP, ("dotnet", "build", "A.slnx")), (TOP, ("dotnet", "build", "B.slnx"))])
+
+    def test_command_without_marker_gives_one_pair_for_two_solutions(self):
+        isdir, listdir = fake_tree({"": ["A.slnx", "B.slnx", "a.cs"]})
+
+        roots = guards.matching_roots(["a.cs"], [CS_ROW], TOP, isdir, listdir)
+
+        self.assertEqual(roots, [(TOP, ("dotnet", "build"))])
 
 
 class TrimOutputTests(unittest.TestCase):
@@ -490,6 +553,22 @@ class RunBuildGateTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         self.assertEqual(stderr, f"guards.py: build gate skipped {self.root}: tool not found on PATH\n")
+
+    def test_marker_row_builds_each_solution_and_names_the_failing_one(self):
+        for name in ("A.slnx", "B.slnx"):
+            open(os.path.join(self.tmp.name, name), "w").close()
+        row = {"glob": "*.py", "root_marker": "*.slnx", "command": ["tool", "build", "{marker}"]}
+        builds = [subprocess_result(0, b"", b""), subprocess_result(1, b"", b"B.slnx: error\n")]
+        stderr = io.StringIO()
+        with mock.patch.object(guards, "_git", side_effect=self.git_replies), \
+                mock.patch("guards.shutil.which", return_value="tool"), \
+                mock.patch("guards.subprocess.run", side_effect=builds) as run, \
+                contextlib.redirect_stderr(stderr):
+            code = guards.run_build_gate(self.payload("git push"), build_gate_cfg(builds=(row,)))
+
+        self.assertEqual(code, 2)
+        self.assertTrue(stderr.getvalue().startswith(f"Build failed in {self.root} (tool build B.slnx)."))
+        self.assertEqual(run.call_count, 2)
 
 
 def subprocess_result(returncode, stdout, stderr):

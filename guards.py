@@ -44,6 +44,7 @@ POSTING_RE = re.compile(
 )
 FILE_FLAGS = ("--body-file", "--input", "--in-file")
 BUILD_TIMEOUT_S = 840
+MARKER = "{marker}"
 BUILD_OUTPUT_LINES = 40
 PUSH_RE = re.compile(r"\bgit\b(?:\s+-C\s+\S+)?\s+push\b|\bgh\s+pr\s+create\b")
 
@@ -158,8 +159,25 @@ def _has_marker(entries, markers):
     return any(fnmatch.filter(entries, p) for p in markers)
 
 
+def marker_files(entries, markers):
+    """Return the entries matching markers, one per base name, sorted.
+
+    An earlier pattern wins a base-name tie, so ["*.sln", "*.slnx"] prefers the .sln.
+    """
+    chosen = {}
+    for p in markers:
+        for name in sorted(fnmatch.filter(entries, p)):
+            key = os.path.normcase(os.path.splitext(name)[0])
+            if key not in chosen:
+                chosen[key] = name
+    return sorted(chosen.values())
+
+
 def matching_roots(changed, builds, top, isdir, listdir):
-    """Return de-duplicated (root, command) pairs, in first-seen order, for the changed files."""
+    """Return de-duplicated (root, command) pairs, in first-seen order, for the changed files.
+
+    One pair per root, or one per marker file in the root when the command uses {marker}.
+    """
     rows = [r for r in builds if _valid_build_row(r)]
     roots = []
     for path in changed:
@@ -168,13 +186,21 @@ def matching_roots(changed, builds, top, isdir, listdir):
                 continue
             m = row["root_marker"]
             markers = [m] if isinstance(m, str) else m
+            command = row["command"]
             d = os.path.normpath(os.path.join(top, os.path.dirname(path)))
             while True:
                 # A deleted file's directory may be gone; keep walking up
-                if isdir(d) and _has_marker(listdir(d), markers):
-                    pair = (d, tuple(row["command"]))
-                    if pair not in roots:
-                        roots.append(pair)
+                entries = listdir(d) if isdir(d) else []
+                if _has_marker(entries, markers):
+                    if any(MARKER in arg for arg in command):
+                        commands = [
+                            tuple(arg.replace(MARKER, name) for arg in command) for name in marker_files(entries, markers)
+                        ]
+                    else:
+                        commands = [tuple(command)]
+                    for c in commands:
+                        if (d, c) not in roots:
+                            roots.append((d, c))
                     break
                 parent = os.path.dirname(d)
                 if d == top or parent == d:
