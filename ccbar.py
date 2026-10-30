@@ -405,11 +405,6 @@ def render(data, cfg, git_info=None, events=None, now=None):
     if cache_text:
         line1 += " | " + cache_text
 
-    for name in EVENTS:
-        if segs.get(name, True) and (events or {}).get(name, {}).get("fired"):
-            label = f"{name} done" if icons.get("ascii_fallback", False) else f"{name} ✓"
-            line1 += " | " + c(label, colors.get(name))
-
     # ---- build line 2 ----
     cwd = _workspace_dir(data)
     git_info = git_info or {}
@@ -461,7 +456,13 @@ def render(data, cfg, git_info=None, events=None, now=None):
 
     rate_text = _rate_limits_text(data, cfg, now, c) if segs.get("rate_limits", True) else ""
 
-    groups = (location, "  ".join(git_parts), rate_text)
+    markers = [
+        c(f"{name} done" if icons.get("ascii_fallback", False) else f"{name} ✓", colors.get(name))
+        for name in EVENTS
+        if segs.get(name, True) and (events or {}).get(name, {}).get("fired")
+    ]
+
+    groups = (location, "  ".join(git_parts), rate_text, *markers)
     line2 = " | ".join(g for g in groups if g)
 
     return line1 + "\n" + line2
