@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import time
+import traceback
 
 # ---------------------------------------------------------------------------
 # Defaults
@@ -26,6 +27,7 @@ DEFAULTS = {
         "retro": True,
         "handoff": True,
         "effort": True,
+        "fast": True,
         "worktree": True,
         "rate_limits": True,
         "prompt_cache": True,
@@ -273,6 +275,8 @@ def _cost_color(total, cfg):
 
 
 def _fmt_duration(seconds):
+    if 0 < seconds < 60:
+        return "<1m"
     minutes = max(0, int(seconds)) // 60
     hours, minutes = divmod(minutes, 60)
     days, hours = divmod(hours, 24)
@@ -355,10 +359,12 @@ def render(data, cfg, git_info=None, events=None, now=None):
 
     ascii_fallback = icons.get("ascii_fallback", False)
 
+    sep = " - " if ascii_fallback else " · "
     effort = _as_dict(data.get("effort")).get("level")
     if segs.get("effort", True) and model_raw and isinstance(effort, str) and effort:
-        sep = " - " if ascii_fallback else " · "
         model_raw = f"{model_raw}{sep}{_sanitize_label(effort, 10)}"
+    if segs.get("fast", True) and model_raw and data.get("fast_mode") is True:
+        model_raw = f"{model_raw}{sep}fast"
 
     # ---- build line 1 ----
     bar_color = _pct_color(pct, cfg)
@@ -717,6 +723,20 @@ def selftest():
 # Entry point
 # ---------------------------------------------------------------------------
 
+def _log_render_error(raw):
+    try:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        with open(os.path.join(STATE_DIR, "last-error.txt"), "w", encoding="utf-8") as f:
+            f.write(stamp + "\n" + traceback.format_exc())
+        if raw is not None:
+            with open(os.path.join(STATE_DIR, "last-error-input.json"), "w", encoding="utf-8") as f:
+                f.write(raw)
+    except OSError:
+        # The bar must stay blank, not broken, even when the state dir is unwritable
+        pass
+
+
 def main():
     # Force UTF-8 output on Windows where the default codepage may reject block chars
     if hasattr(sys.stdout, "buffer"):
@@ -733,13 +753,16 @@ def main():
             sys.exit(1)
         sys.exit(0)
 
+    raw = None
     try:
-        data = json.loads(sys.stdin.read())
+        raw = sys.stdin.read()
+        data = json.loads(raw)
         cfg = load_config()
         state = update_event_state(data, cfg)
         git_info = cached_git_info(data, cfg, state)
         print(render(data, cfg, git_info=git_info, events=state.get("events", {}), now=time.time()))
     except Exception:
+        _log_render_error(raw)
         print("\n")
         sys.exit(0)
 

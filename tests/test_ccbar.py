@@ -295,6 +295,51 @@ class RunStopHookTests(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(self._tmp.name, "old.json")))
 
 
+class MainRenderErrorTests(unittest.TestCase):
+    STDIN = json.dumps({"model": {"display_name": "Opus"}})
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._orig_state_dir = ccbar.STATE_DIR
+        ccbar.STATE_DIR = self._tmp.name
+
+    def tearDown(self):
+        ccbar.STATE_DIR = self._orig_state_dir
+        self._tmp.cleanup()
+
+    def _run_failing_render(self):
+        with mock.patch.object(ccbar, "load_config", return_value={}), \
+                mock.patch.object(ccbar, "cached_git_info", return_value=None), \
+                mock.patch.object(ccbar, "render", side_effect=RuntimeError("boom")), \
+                mock.patch("sys.argv", ["ccbar.py"]), \
+                mock.patch("sys.stdin", io.StringIO(self.STDIN)), \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            with self.assertRaises(SystemExit) as exit_ctx:
+                ccbar.main()
+        return stdout.getvalue(), exit_ctx.exception.code
+
+    def test_render_failure_logs_traceback_and_input(self):
+        out, code = self._run_failing_render()
+
+        self.assertEqual(out, "\n\n")
+        self.assertEqual(code, 0)
+        with open(os.path.join(self._tmp.name, "last-error.txt"), encoding="utf-8") as f:
+            self.assertIn("RuntimeError: boom", f.read())
+        with open(os.path.join(self._tmp.name, "last-error-input.json"), encoding="utf-8") as f:
+            self.assertEqual(f.read(), self.STDIN)
+
+    def test_unwritable_state_dir_still_prints_blank(self):
+        blocker = os.path.join(self._tmp.name, "not-a-dir")
+        with open(blocker, "w") as f:
+            f.write("")
+        ccbar.STATE_DIR = blocker
+
+        out, code = self._run_failing_render()
+
+        self.assertEqual(out, "\n\n")
+        self.assertEqual(code, 0)
+
+
 class GitInfoTests(unittest.TestCase):
     def test_shortstat_diffs_against_head(self):
         with mock.patch.object(ccbar, "_run_git", return_value="") as run_git:
@@ -563,6 +608,41 @@ class RenderTests(unittest.TestCase):
 
         self.assertTrue(line1.startswith("[Opus 4.8]"))
 
+    def test_fast_shown_after_effort(self):
+        line1 = self._render_with({"effort": {"level": "high"}, "fast_mode": True})[0]
+
+        self.assertTrue(line1.startswith("[Opus 4.8 · high · fast]"))
+
+    def test_fast_shown_without_effort(self):
+        line1 = self._render_with({"fast_mode": True})[0]
+
+        self.assertTrue(line1.startswith("[Opus 4.8 · fast]"))
+
+    def test_fast_mode_false_shows_nothing(self):
+        line1 = self._render_with({"fast_mode": False})[0]
+
+        self.assertTrue(line1.startswith("[Opus 4.8]"))
+
+    def test_fast_mode_missing_shows_nothing(self):
+        line1 = self._render_with({})[0]
+
+        self.assertNotIn("fast", line1)
+
+    def test_fast_mode_non_bool_shows_nothing(self):
+        line1 = self._render_with({"fast_mode": "yes"})[0]
+
+        self.assertTrue(line1.startswith("[Opus 4.8]"))
+
+    def test_fast_hidden_when_segment_off(self):
+        line1 = self._render_with({"fast_mode": True}, {"segments": {"fast": False}})[0]
+
+        self.assertTrue(line1.startswith("[Opus 4.8]"))
+
+    def test_fast_uses_dash_under_ascii_fallback(self):
+        line1 = self._render_with({"fast_mode": True}, {"icons": {"ascii_fallback": True}})[0]
+
+        self.assertTrue(line1.startswith("[Opus 4.8 - fast]"))
+
     def _worktree_line2(self, name, cfg=None, repo="ccBar"):
         extra = {"worktree": {"name": name}, "workspace": {"current_dir": f"C:/src/{name}"}}
         return self._render_with(extra, cfg, git_info={**CLEAN_INFO, "repo": repo})[1]
@@ -804,8 +884,23 @@ class PromptCacheTextTests(unittest.TestCase):
 
 
 class FmtDurationTests(unittest.TestCase):
-    def test_under_a_minute_is_zero_minutes(self):
-        self.assertEqual(ccbar._fmt_duration(59), "0m")
+    def test_one_second_is_under_a_minute(self):
+        self.assertEqual(ccbar._fmt_duration(1), "<1m")
+
+    def test_fifty_nine_seconds_is_under_a_minute(self):
+        self.assertEqual(ccbar._fmt_duration(59), "<1m")
+
+    def test_zero_is_zero_minutes(self):
+        self.assertEqual(ccbar._fmt_duration(0), "0m")
+
+    def test_negative_is_zero_minutes(self):
+        self.assertEqual(ccbar._fmt_duration(-5), "0m")
+
+    def test_sixty_seconds_is_one_minute(self):
+        self.assertEqual(ccbar._fmt_duration(60), "1m")
+
+    def test_sixty_one_seconds_is_one_minute(self):
+        self.assertEqual(ccbar._fmt_duration(61), "1m")
 
     def test_hours_and_minutes(self):
         self.assertEqual(ccbar._fmt_duration(7800), "2h10m")

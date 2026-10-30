@@ -84,6 +84,7 @@ Segments with nothing to show are left out.
 |---------|---------|-----------------|
 | Model | `[Claude Opus 4.8]` | `segments.model` |
 | Effort level, inside the model bracket when Claude Code reports one | `· high` | `segments.effort` |
+| Fast mode, inside the model bracket when `/fast` is on | `· fast` | `segments.fast` |
 | Context bar: green up to 60%, yellow up to 80%, red above | `████████░░░░` | `segments.context_bar` |
 | Context used, as a percentage and in tokens | `41.2% (412k / 1M)` | `segments.context_pct` |
 | Session cost, an estimate from Claude Code, not your bill. Turns yellow from $10, red from $30 | `$1.2345` | `segments.cost` |
@@ -236,6 +237,7 @@ The blocks below show the defaults.
   "retro": true,
   "handoff": true,
   "effort": true,
+  "fast": true,
   "worktree": true,
   "rate_limits": true,
   "prompt_cache": true
@@ -430,7 +432,7 @@ Removes `statusLine`, the Stop hook and the guard hooks from `settings.json`, th
 
 ## Troubleshooting
 
-**Blank status line with no error.** The most common cause is `python` not being on PATH. The installer works around this by writing a working interpreter command into `settings.json`. If you installed manually, check that the `statusLine` command in `~/.claude/settings.json` points to a real Python.
+**Blank status line with no error.** The most common cause is `python` not being on PATH. The installer works around this by writing a working interpreter command into `settings.json`. If you installed manually, check that the `statusLine` command in `~/.claude/settings.json` points to a real Python. If the bar was working and went blank, check `~/.claude/ccbar-state/last-error.txt` for the traceback. Replay the input that caused it with `python ccbar.py < ~/.claude/ccbar-state/last-error-input.json`.
 
 **Status line shows raw text or garbled characters.** Your terminal may not support UTF-8 block characters. Set `"filled_char": "#"`, `"empty_char": "-"` and `"ascii_fallback": true` in the config.
 
