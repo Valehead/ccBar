@@ -440,6 +440,8 @@ Removes `statusLine`, the Stop hook and the guard hooks from `settings.json`, th
 
 **A guard blocked something it shouldn't.** Switch that guard off with `"enabled": false` under its `guards` key, or remove all guards with `python install.py --no-guards`.
 
+**Installer says it can't read settings.json.** The file isn't valid JSON (often a trailing comma from a hand edit). Fix it, or move it aside, and rerun. The installer refuses to write so it can't wipe your other settings.
+
 ---
 
 ## Self-test and tests
