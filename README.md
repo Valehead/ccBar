@@ -216,7 +216,7 @@ Details:
 - `{marker}` in `command` is replaced with each file in the root that matches `root_marker`, and the command runs once per file. Use it when a root can hold more than one solution, since a bare `dotnet build` refuses to pick one (MSB1011). When two matches share a base name, such as `MyApp.sln` and `MyApp.slnx`, only the one matched by the earlier pattern builds, so `["*.sln", "*.slnx"]` prefers the `.sln`. Rows without `{marker}` run once per root.
 - Unpushed commits are compared with the branch's upstream, or `origin/HEAD` when there is none. The build itself runs against the working tree.
 - The repo is the command's working directory, or the `<dir>` of a leading `cd <dir> &&` or of `git -C <dir> push`.
-- Each project root builds once per push, with a timeout of 840 seconds.
+- Each project root builds once per push, or once per marker file with `{marker}`. Each build has a timeout of 840 seconds.
 - Fails open: a build tool that isn't on PATH, a timeout, or a git failure lets the push through with one warning line.
 - Any command that isn't a push costs one regex search.
 
