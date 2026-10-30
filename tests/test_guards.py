@@ -463,6 +463,36 @@ class MatchingRootsTests(unittest.TestCase):
 
         self.assertEqual(roots, [(TOP, ("dotnet", "build"))])
 
+    def test_dotnet_preset_builds_each_solution_quietly(self):
+        isdir, listdir = fake_tree({"": ["A.sln", "a.cs"]})
+
+        roots = guards.matching_roots(["a.cs"], ["dotnet"], TOP, isdir, listdir)
+
+        self.assertEqual(roots, [(TOP, ("dotnet", "build", "A.sln", "-v", "q", "-clp:ErrorsOnly"))])
+
+    def test_unknown_preset_name_is_skipped(self):
+        isdir, listdir = fake_tree({"": ["A.sln", "a.cs"]})
+
+        self.assertEqual(guards.matching_roots(["a.cs"], ["nope"], TOP, isdir, listdir), [])
+
+    def test_preset_and_dict_rows_mix(self):
+        isdir, listdir = fake_tree({"": ["A.sln", "setup.cfg", "a.cs", "a.py"]})
+
+        roots = guards.matching_roots(["a.cs", "a.py"], ["dotnet", PY_ROW], TOP, isdir, listdir)
+
+        self.assertEqual(roots, [
+            (TOP, ("dotnet", "build", "A.sln", "-v", "q", "-clp:ErrorsOnly")),
+            (TOP, ("tool", "build")),
+        ])
+
+    def test_preset_and_identical_dict_row_build_once(self):
+        isdir, listdir = fake_tree({"": ["A.sln", "a.cs"]})
+        rows = ["dotnet", dict(guards.BUILD_PRESETS["dotnet"])]
+
+        roots = guards.matching_roots(["a.cs"], rows, TOP, isdir, listdir)
+
+        self.assertEqual(roots, [(TOP, ("dotnet", "build", "A.sln", "-v", "q", "-clp:ErrorsOnly"))])
+
 
 class TrimOutputTests(unittest.TestCase):
     def test_keeps_last_n_non_blank_lines(self):

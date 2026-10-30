@@ -45,6 +45,9 @@ POSTING_RE = re.compile(
 FILE_FLAGS = ("--body-file", "--input", "--in-file")
 BUILD_TIMEOUT_S = 840
 MARKER = "{marker}"
+BUILD_PRESETS = {
+    "dotnet": {"glob": "*.cs", "root_marker": ["*.sln", "*.slnx"], "command": ["dotnet", "build", MARKER, "-v", "q", "-clp:ErrorsOnly"]},
+}
 BUILD_OUTPUT_LINES = 40
 PUSH_RE = re.compile(r"\bgit\b(?:\s+-C\s+\S+)?\s+push\b|\bgh\s+pr\s+create\b")
 
@@ -143,6 +146,15 @@ def push_dir(command, cwd, posix):
     return os.path.join(cwd, d)
 
 
+def expand_builds(builds):
+    """Replace each preset name with its row and drop unknown names. Anything else passes through."""
+    return [
+        BUILD_PRESETS[b] if isinstance(b, str) else b
+        for b in builds
+        if not isinstance(b, str) or b in BUILD_PRESETS
+    ]
+
+
 def _valid_build_row(row):
     if not isinstance(row, dict):
         return False
@@ -178,7 +190,7 @@ def matching_roots(changed, builds, top, isdir, listdir):
 
     One pair per root, or one per marker file in the root when the command uses {marker}.
     """
-    rows = [r for r in builds if _valid_build_row(r)]
+    rows = [r for r in expand_builds(builds) if _valid_build_row(r)]
     roots = []
     for path in changed:
         for row in rows:

@@ -64,6 +64,7 @@ The clone can then move or be deleted, but a `git pull` only reaches the bar aft
 | `--install-inside-repo` | Run `ccbar.py` from the clone (the default mode) |
 | `--install-direct` | Copy `ccbar.py` to `~/.claude` instead of running it from the clone |
 | `--guards` | Register the [guard hooks](#optional-guard-hooks) |
+| `--dotnet` | Add the `dotnet` [build gate](#build-gate) preset to your config and register the guard hooks (implies `--guards`) |
 | `--no-guards` | Remove the guard hooks |
 | `--reset-config` | Replace your config with `config.example.json`, backing yours up to `ccbar.config.json.bak` first |
 | `--dry-run` | Print what would change; write nothing |
@@ -189,6 +190,8 @@ Does nothing until you add rows to `guards.build_gate.builds`. A row is:
 ```json
 {"glob": "*.cs", "root_marker": ["*.sln", "*.slnx"], "command": ["dotnet", "build", "{marker}", "-v", "q", "-clp:ErrorsOnly"]}
 ```
+
+A row can also be a preset name. `"dotnet"` stands for the .NET row above, so fixes to it reach you on `git pull`. `python install.py --dotnet` adds `"dotnet"` to your `builds` and registers the guard hooks in one step. To stop using it, remove `"dotnet"` from `builds`. An unknown name is skipped.
 
 Before `git push` or `gh pr create`, the guard finds the files your unpushed commits change. Each file that matches a row's `glob` walks up from its directory to the repo root, and the first directory holding something that matches `root_marker` is its project root. The row's `command` runs there. If it fails, the push is blocked and Claude gets the last 40 lines of output and is told to fix the errors first.
 
@@ -403,7 +406,7 @@ These keys take effect only after `install.py --guards`.
 
 - `enabled: false` switches one guard off without reinstalling.
 - `banned`: literal substrings to block in posted text. Empty does nothing. See [Posted text](#posted-text).
-- `builds`: build gate rows. Empty does nothing. See [Build gate](#build-gate).
+- `builds`: build gate rows or preset names such as `"dotnet"`. Empty does nothing. See [Build gate](#build-gate).
 
 ---
 

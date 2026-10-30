@@ -16,6 +16,8 @@ Usage:
                                    (backs up your existing config first)
   python install.py --guards       Register the guard hooks (guards.py, always run
                                    from this clone)
+  python install.py --dotnet       Add the .NET build gate preset to your config and
+                                   register the guard hooks (implies --guards)
   python install.py --no-guards    Remove the guard hooks
   python install.py --uninstall    Remove ccBar (and its guard hooks) from settings.json
 
@@ -117,6 +119,45 @@ def save_settings(data, dry_run):
     os.makedirs(CLAUDE_DIR, exist_ok=True)
     with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
         f.write(content)
+
+
+def load_config_file():
+    try:
+        with open(DEST_CONFIG, "r", encoding="utf-8") as f:
+            config = json.load(f)
+    except (OSError, ValueError) as e:
+        _refuse_config(f"could not read {DEST_CONFIG}: {e}")
+    if not isinstance(config, dict):
+        _refuse_config(f"could not read {DEST_CONFIG}: expected a JSON object at the top level")
+    return config
+
+
+def _refuse_config(message):
+    print(f"ERROR: {message}", file=sys.stderr)
+    print("Fix the file or move it aside, then rerun. ccbar.config.json was left unchanged.", file=sys.stderr)
+    sys.exit(1)
+
+
+def save_config_file(config, dry_run, backup):
+    content = json.dumps(config, indent=2, ensure_ascii=False) + "\n"
+    if dry_run:
+        print(f"[dry-run] would write {DEST_CONFIG}:")
+        print(content)
+        return
+    if backup:
+        shutil.copy2(DEST_CONFIG, DEST_CONFIG_BAK)
+        print(f"  Backed up existing config to {DEST_CONFIG_BAK}")
+    with open(DEST_CONFIG, "w", encoding="utf-8") as f:
+        f.write(content)
+
+
+def add_build_preset(config, name):
+    """Append name to guards.build_gate.builds unless it's there. Return True if config changed."""
+    builds = config.setdefault("guards", {}).setdefault("build_gate", {}).setdefault("builds", [])
+    if name in builds:
+        return False
+    builds.append(name)
+    return True
 
 
 def skill_names():
@@ -261,11 +302,12 @@ def remove_subagent_status_line(settings):
 def next_steps(dest_config, guards_registered, py_display):
     lines = ["Optional next steps:", f"  Customize:  {dest_config}"]
     if not guards_registered:
-        lines.append(f"  Guard hooks (line endings, posted text, build gate): {py_display} install.py --guards")
+        lines.append(f"  Guard hooks (line endings, posted text, build gate): {py_display} install.py --guards"
+                     "  (.NET projects: install.py --dotnet)")
     return lines
 
 
-def install(dry_run=False, no_verify=False, reset_config=False, in_place=False, guards=None):
+def install(dry_run=False, no_verify=False, reset_config=False, in_place=False, guards=None, dotnet=False):
     print("=== ccBar installer ===\n")
 
     py_cmd, py_display = find_python()
@@ -330,6 +372,19 @@ def install(dry_run=False, no_verify=False, reset_config=False, in_place=False, 
     else:
         print(f"  Config preserved at {DEST_CONFIG}")
         print(f"    (pass --reset-config to overwrite; your current config will be backed up)")
+
+    if dotnet:
+        if dry_run and not os.path.isfile(DEST_CONFIG):
+            print(f"[dry-run] would add the dotnet build preset to {DEST_CONFIG}")
+        else:
+            config = load_config_file()
+            if not add_build_preset(config, "dotnet"):
+                print(f"  dotnet build preset already in {DEST_CONFIG}")
+            else:
+                # A config this run just wrote has nothing to back up, and a --reset-config backup must survive
+                save_config_file(config, dry_run, backup=config_existed and not reset_config)
+                if not dry_run:
+                    print(f"  Added the dotnet build preset to {DEST_CONFIG}")
 
     # Always update statusLine — picks up command or format changes across versions
     settings = load_settings()
@@ -438,13 +493,17 @@ def main():
     if "--guards" in args and "--no-guards" in args:
         print("ERROR: --guards and --no-guards are mutually exclusive.", file=sys.stderr)
         sys.exit(2)
-    guards = True if "--guards" in args else False if "--no-guards" in args else None
+    dotnet = "--dotnet" in args
+    if dotnet and "--no-guards" in args:
+        print("ERROR: --dotnet and --no-guards are mutually exclusive.", file=sys.stderr)
+        sys.exit(2)
+    guards = True if "--guards" in args or dotnet else False if "--no-guards" in args else None
 
     if "--uninstall" in args:
         uninstall(dry_run=dry_run)
     else:
         in_place = resolve_mode(load_settings(), SCRIPT_DIR, args)
-        install(dry_run=dry_run, no_verify=no_verify, reset_config=reset_config, in_place=in_place, guards=guards)
+        install(dry_run=dry_run, no_verify=no_verify, reset_config=reset_config, in_place=in_place, guards=guards, dotnet=dotnet)
 
 
 if __name__ == "__main__":

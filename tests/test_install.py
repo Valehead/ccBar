@@ -247,7 +247,7 @@ class NextStepsTests(unittest.TestCase):
         self.assertEqual(lines, [
             "Optional next steps:",
             "  Customize:  C:/Users/me/.claude/ccbar.config.json",
-            "  Guard hooks (line endings, posted text, build gate): py -3 install.py --guards",
+            "  Guard hooks (line endings, posted text, build gate): py -3 install.py --guards  (.NET projects: install.py --dotnet)",
         ])
 
     def test_omits_guards_hint_when_guards_registered(self):
@@ -279,6 +279,35 @@ class ResolveModeTests(unittest.TestCase):
 
     def test_match_is_case_insensitive(self):
         self.assertTrue(install.resolve_mode(IN_PLACE_STATUS, "c:\\DEV\\ccbar", []))
+
+
+class AddBuildPresetTests(unittest.TestCase):
+    def test_empty_config_gets_nested_builds_list(self):
+        config = {}
+
+        changed = install.add_build_preset(config, "dotnet")
+
+        self.assertTrue(changed)
+        self.assertEqual(config, {"guards": {"build_gate": {"builds": ["dotnet"]}}})
+
+    def test_keeps_existing_rows_and_guard_keys(self):
+        row = {"glob": "*.py", "root_marker": "setup.cfg", "command": ["tool", "build"]}
+        config = {"guards": {"posted_text": {"banned": ["x"]}, "build_gate": {"enabled": True, "builds": [row]}}}
+
+        install.add_build_preset(config, "dotnet")
+
+        self.assertEqual(config, {
+            "guards": {"posted_text": {"banned": ["x"]}, "build_gate": {"enabled": True, "builds": [row, "dotnet"]}},
+        })
+
+    def test_second_call_changes_nothing(self):
+        config = {}
+        install.add_build_preset(config, "dotnet")
+
+        changed = install.add_build_preset(config, "dotnet")
+
+        self.assertFalse(changed)
+        self.assertEqual(config["guards"]["build_gate"]["builds"], ["dotnet"])
 
 
 class LoadSettingsTests(unittest.TestCase):
@@ -339,6 +368,25 @@ class LoadSettingsTests(unittest.TestCase):
         self.write(self.settings, b"[]")
 
         self.assert_refuses(install.load_settings)
+
+    def test_malformed_config_stops_dotnet_install_and_leaves_it_unchanged(self):
+        config = install.DEST_CONFIG
+        self.write(config, b'{"guards": ,}')
+
+        with mock.patch.object(install, "find_python", return_value=(["py", "-3"], "py -3")):
+            self.assert_refuses(lambda: install.install(no_verify=True, guards=True, dotnet=True))
+
+        self.assertEqual(self.read(config), b'{"guards": ,}')
+        self.assertFalse(os.path.exists(install.DEST_CONFIG_BAK))
+
+    def test_reset_config_with_dotnet_keeps_the_user_config_backup(self):
+        self.write(install.DEST_CONFIG, b'{"mine": true}')
+
+        with mock.patch.object(install, "find_python", return_value=(["py", "-3"], "py -3")):
+            with contextlib.redirect_stdout(io.StringIO()):
+                install.install(no_verify=True, reset_config=True, guards=True, dotnet=True)
+
+        self.assertEqual(self.read(install.DEST_CONFIG_BAK), b'{"mine": true}')
 
     def test_missing_file_gives_empty_dict(self):
         self.assertEqual(install.load_settings(), {})
