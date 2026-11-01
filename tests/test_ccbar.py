@@ -3,17 +3,17 @@ from unittest import mock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import ccbar
 
-RETRO_CFG = {"enabled": True, "threshold_tokens": 400000, "threshold_pct": 70}
+RETRO_CFG = {"enabled": True, "threshold_tokens": 300000, "threshold_pct": 85}
 HANDOFF_CFG = {
     "enabled": True,
-    "threshold_tokens": 600000,
-    "threshold_pct": 85,
+    "threshold_tokens": 200000,
+    "threshold_pct": 70,
     "plans_dir": "~/.claude/plans",
     "prompt_template": "Read and execute this plan at: {path}",
 }
 CFG = {"retro": RETRO_CFG, "handoff": HANDOFF_CFG}
-CROSSED_STATE = {"window_size": 1000000, "events": {"retro": {"crossed": True, "fired": False, "tokens": 410000}}}
-FIRED_STATE = {"window_size": 1000000, "events": {"retro": {"crossed": True, "fired": True, "tokens": 410000}}}
+CROSSED_STATE = {"window_size": 1000000, "events": {"retro": {"crossed": True, "fired": False, "tokens": 510000}}}
+FIRED_STATE = {"window_size": 1000000, "events": {"retro": {"crossed": True, "fired": True, "tokens": 510000}}}
 BOTH_CROSSED_STATE = {
     "window_size": 1000000,
     "events": {
@@ -61,10 +61,10 @@ class ContextTokensTests(unittest.TestCase):
 
 class ThresholdCrossedTests(unittest.TestCase):
     def test_crosses_on_token_threshold_for_1m_window(self):
-        self.assertTrue(ccbar.threshold_crossed(410000, 1000000, RETRO_CFG))
+        self.assertTrue(ccbar.threshold_crossed(510000, 1000000, RETRO_CFG))
 
     def test_crosses_on_pct_threshold_for_200k_window(self):
-        self.assertTrue(ccbar.threshold_crossed(140000, 200000, RETRO_CFG))
+        self.assertTrue(ccbar.threshold_crossed(170000, 200000, RETRO_CFG))
 
     def test_not_crossed_below_both(self):
         self.assertFalse(ccbar.threshold_crossed(100000, 1000000, RETRO_CFG))
@@ -100,17 +100,34 @@ class StopHookOutputTests(unittest.TestCase):
         self.assertIn("session-retro", hso["additionalContext"])
         self.assertIn(PAYLOAD["transcript_path"], hso["additionalContext"])
 
-    def test_returns_retro_when_both_crossed_and_unfired(self):
+    def test_returns_handoff_when_both_crossed_and_unfired(self):
         name, _ = ccbar.stop_hook_output(PAYLOAD, BOTH_CROSSED_STATE, CFG)
 
-        self.assertEqual(name, "retro")
+        self.assertEqual(name, "handoff")
 
-    def test_returns_handoff_when_retro_already_fired(self):
-        state = {"events": {**BOTH_CROSSED_STATE["events"], "retro": {"crossed": True, "fired": True}}}
+    def test_returns_retro_when_handoff_already_fired(self):
+        state = {"events": {**BOTH_CROSSED_STATE["events"], "handoff": {"crossed": True, "fired": True, "tokens": 610000}}}
 
         name, _ = ccbar.stop_hook_output(PAYLOAD, state, CFG)
 
-        self.assertEqual(name, "handoff")
+        self.assertEqual(name, "retro")
+
+    def test_retro_context_passes_handoff_fired_at_when_handoff_fired(self):
+        state = {
+            "events": {
+                "handoff": {"crossed": True, "fired": True, "tokens": 360000},
+                "retro": {"crossed": True, "fired": False, "tokens": 510000},
+            }
+        }
+
+        _, out = ccbar.stop_hook_output(PAYLOAD, state, CFG)
+
+        self.assertIn("handoff_fired_at=360000", out["hookSpecificOutput"]["additionalContext"])
+
+    def test_retro_context_omits_handoff_fired_at_when_handoff_not_fired(self):
+        _, out = ccbar.stop_hook_output(PAYLOAD, CROSSED_STATE, CFG)
+
+        self.assertNotIn("handoff_fired_at", out["hookSpecificOutput"]["additionalContext"])
 
     def test_returns_none_when_handoff_disabled_even_if_crossed(self):
         state = {"events": {"handoff": {"crossed": True, "fired": False, "tokens": 610000}}}
@@ -152,7 +169,7 @@ class StateIoTests(unittest.TestCase):
         self.assertEqual(ccbar.load_state("missing"), {})
 
     def test_load_converts_legacy_flat_file_to_retro_event(self):
-        legacy = {"crossed": True, "retro_fired": True, "tokens": 410000, "window_size": 1000000}
+        legacy = {"crossed": True, "retro_fired": True, "tokens": 510000, "window_size": 1000000}
         with open(os.path.join(self._tmp.name, "legacy.json"), "w", encoding="utf-8") as f:
             json.dump(legacy, f)
 
@@ -204,11 +221,11 @@ class StateIoTests(unittest.TestCase):
         self.assertEqual(below, {})
         self.assertFalse(os.path.exists(state_path))
 
-        first = ccbar.update_event_state(_status_payload(450000), CFG)
-        self.assertTrue(first["events"]["retro"]["crossed"])
+        first = ccbar.update_event_state(_status_payload(250000), CFG)
+        self.assertTrue(first["events"]["handoff"]["crossed"])
 
         second = ccbar.update_event_state(_status_payload(600000), CFG)
-        self.assertEqual(second["events"]["retro"]["tokens"], 450000)
+        self.assertEqual(second["events"]["handoff"]["tokens"], 250000)
 
     def test_update_event_state_records_handoff_while_retro_disabled(self):
         cfg = {**CFG, "retro": {**RETRO_CFG, "enabled": False}}
@@ -265,15 +282,16 @@ class RunStopHookTests(unittest.TestCase):
         self.assertEqual(second, "")
         self.assertTrue(ccbar.load_state(PAYLOAD["session_id"])["events"]["retro"]["fired"])
 
-    def test_fires_retro_then_handoff_then_nothing(self):
+    def test_fires_handoff_then_retro_then_nothing(self):
         ccbar.save_state(PAYLOAD["session_id"], BOTH_CROSSED_STATE)
 
         first = self._run(PAYLOAD)
         second = self._run(PAYLOAD)
         third = self._run(PAYLOAD)
 
-        self.assertIn("session-retro", first)
-        self.assertIn("session-handoff", second)
+        self.assertIn("session-handoff", first)
+        self.assertIn("session-retro", second)
+        self.assertIn("handoff_fired_at=610000", second)
         self.assertEqual(third, "")
 
     def test_stop_hook_active_fires_nothing(self):
@@ -548,10 +566,10 @@ class RenderTests(unittest.TestCase):
         self.assertNotIn("handoff", line1)
         self.assertEqual(line2, "📁 repo | handoff ✓")
 
-    def test_shows_both_markers_retro_first(self):
+    def test_shows_both_markers_handoff_first(self):
         line2 = self._render_markers({}, {"retro": {"fired": True}, "handoff": {"fired": True}})[1]
 
-        self.assertEqual(line2, "📁 repo | retro ✓ | handoff ✓")
+        self.assertEqual(line2, "📁 repo | handoff ✓ | retro ✓")
 
     def test_shows_handoff_done_under_ascii_fallback(self):
         line2 = self._render_markers({"icons": {"ascii_fallback": True}}, {"handoff": {"fired": True}})[1]

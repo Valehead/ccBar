@@ -80,13 +80,13 @@ DEFAULTS = {
     },
     "retro": {
         "enabled": True,
-        "threshold_tokens": 400000,
-        "threshold_pct": 70,
+        "threshold_tokens": 300000,
+        "threshold_pct": 85,
     },
     "handoff": {
         "enabled": True,
-        "threshold_tokens": 600000,
-        "threshold_pct": 85,
+        "threshold_tokens": 200000,
+        "threshold_pct": 70,
         "plans_dir": "~/.claude/plans",
         "prompt_template": "Read and execute this plan at: {path}",
     },
@@ -542,7 +542,7 @@ def render_subagents(data, cfg, now_ms):
 STATE_DIR = os.path.expanduser("~/.claude/ccbar-state")
 STATE_MAX_AGE_DAYS = 7
 EVENT_SKILLS = {"retro": "session-retro", "handoff": "session-handoff"}
-EVENTS = ("retro", "handoff")
+EVENTS = ("handoff", "retro")
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 
@@ -555,9 +555,9 @@ def threshold_crossed(tokens, window_size, event_cfg):
     return pct >= event_cfg.get("threshold_pct", 70)
 
 
-def _event_context(name, event, payload, cfg):
+def _event_context(name, events, payload, cfg):
     context = (
-        f"This session's context passed {event.get('tokens', 0):,} tokens. "
+        f"This session's context passed {events[name].get('tokens', 0):,} tokens. "
         f"Before doing anything else, invoke the {EVENT_SKILLS[name]} skill with the Skill tool, "
         f"passing args: session_id={payload.get('session_id', '')} "
         f"transcript_path={payload.get('transcript_path', '')} cwd={payload.get('cwd', '')}"
@@ -567,6 +567,8 @@ def _event_context(name, event, payload, cfg):
         plans_dir = os.path.abspath(os.path.expanduser(handoff_cfg.get("plans_dir", "~/.claude/plans")))
         template = handoff_cfg.get("prompt_template", "Read and execute this plan at: {path}")
         context += f' plans_dir={plans_dir} prompt_template="{template}"'
+    elif events.get("handoff", {}).get("fired"):
+        context += f" handoff_fired_at={events['handoff'].get('tokens', 0)}"
     return context
 
 
@@ -582,7 +584,7 @@ def stop_hook_output(payload, state, cfg):
     name = next((n for n in EVENTS if due(n)), None)
     if name is None:
         return None
-    context = _event_context(name, events[name], payload, cfg)
+    context = _event_context(name, events, payload, cfg)
     return name, {"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": context}}
 
 
