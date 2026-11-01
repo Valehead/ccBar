@@ -313,6 +313,192 @@ class RunStopHookTests(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(self._tmp.name, "old.json")))
 
 
+def _assistant(msg_id, input_tokens, cache_read=0, cache_creation=0, sidechain=False):
+    usage = {
+        "input_tokens": input_tokens,
+        "cache_read_input_tokens": cache_read,
+        "cache_creation_input_tokens": cache_creation,
+    }
+    return {"type": "assistant", "isSidechain": sidechain, "message": {"id": msg_id, "usage": usage}}
+
+
+def _compaction(trigger, pre_tokens):
+    return {"type": "system", "isSidechain": False, "compactMetadata": {"trigger": trigger, "preTokens": pre_tokens}}
+
+
+def _session(peak, responses=5, compactions=()):
+    return {"responses": responses, "peak": peak, "compactions": list(compactions)}
+
+
+class SessionStatsTests(unittest.TestCase):
+    def test_peak_sums_the_three_usage_fields(self):
+        stats = ccbar._session_stats([_assistant("a", 100, cache_read=2000, cache_creation=30000)])
+
+        self.assertEqual(stats["peak"], 32100)
+
+    def test_missing_usage_field_counts_as_zero(self):
+        entry = {"type": "assistant", "isSidechain": False, "message": {"id": "a", "usage": {"input_tokens": 500}}}
+
+        stats = ccbar._session_stats([entry])
+
+        self.assertEqual(stats["peak"], 500)
+
+    def test_skips_sidechain_entries(self):
+        lines = [_assistant("a", 1000), _assistant("b", 900000, sidechain=True)]
+
+        stats = ccbar._session_stats(lines)
+
+        self.assertEqual((stats["responses"], stats["peak"]), (1, 1000))
+
+    def test_counts_responses_by_distinct_message_id(self):
+        lines = [_assistant("a", 1000), _assistant("a", 1000), _assistant("b", 2000)]
+
+        stats = ccbar._session_stats(lines)
+
+        self.assertEqual(stats["responses"], 2)
+
+    def test_collects_manual_and_auto_compactions(self):
+        lines = [_compaction("manual", 107474), _assistant("a", 1000), _compaction("auto", 160000)]
+
+        stats = ccbar._session_stats(lines)
+
+        self.assertEqual(stats["compactions"], [("manual", 107474), ("auto", 160000)])
+
+
+class ContextReportTests(unittest.TestCase):
+    def test_drops_sessions_under_min_responses(self):
+        report = ccbar.context_report([_session(100000), _session(900000, responses=2)], CFG)
+
+        self.assertEqual((report["count"], report["max"]), (1, 100000))
+
+    def test_nearest_rank_percentiles(self):
+        peaks = [10000 * i for i in range(1, 21)]
+
+        report = ccbar.context_report([_session(p) for p in peaks], CFG)
+
+        self.assertEqual(report["median"], 105000)
+        self.assertEqual(report["p75"], 150000)
+        self.assertEqual(report["p90"], 180000)
+        self.assertEqual(report["max"], 200000)
+
+    def test_steps_count_sessions_reaching_each_50k_up_to_first_step_above_max(self):
+        report = ccbar.context_report([_session(40000), _session(120000), _session(160000)], CFG)
+
+        self.assertEqual(report["steps"], {50000: 2, 100000: 2, 150000: 1, 200000: 0})
+
+    def test_counts_sessions_each_threshold_would_have_fired_in(self):
+        report = ccbar.context_report([_session(150000), _session(250000), _session(350000)], CFG)
+
+        self.assertEqual(report["thresholds"]["handoff"], {"threshold_tokens": 200000, "fired": 2})
+        self.assertEqual(report["thresholds"]["retro"], {"threshold_tokens": 300000, "fired": 1})
+
+    def test_splits_compactions_by_trigger(self):
+        sessions = [_session(300000, compactions=[("manual", 120000), ("auto", 160000)]), _session(200000, compactions=[("manual", 90000)])]
+
+        report = ccbar.context_report(sessions, CFG)
+
+        self.assertEqual(report["compactions"], {"manual": [120000, 90000], "auto": [160000]})
+
+    def test_no_sessions_reports_zero_count_without_percentiles(self):
+        report = ccbar.context_report([], CFG)
+
+        self.assertEqual(report["count"], 0)
+        self.assertNotIn("median", report)
+
+
+class FormatContextReportTests(unittest.TestCase):
+    REPORT = {
+        "min_responses": 3,
+        "count": 4,
+        "median": 104500,
+        "p75": 150000,
+        "p90": 220000,
+        "max": 347000,
+        "steps": {50000: 4, 100000: 2},
+        "compactions": {"manual": [294447, 107474], "auto": []},
+        "thresholds": {"handoff": {"threshold_tokens": 200000, "fired": 1}},
+    }
+
+    def test_formats_one_fact_per_line(self):
+        text = ccbar.format_context_report(self.REPORT, 35)
+
+        self.assertEqual(
+            text.splitlines(),
+            [
+                "ccBar context report: last 35 days, main-thread sessions with 3+ responses",
+                "Percentiles are nearest-rank over each session's peak context (input + cache read + cache creation).",
+                "Sessions: 4",
+                "Median peak: 104k",
+                "p75 peak: 150k",
+                "p90 peak: 220k",
+                "Max peak: 347k",
+                "Sessions reaching 50k: 4",
+                "Sessions reaching 100k: 2",
+                "Manual compactions: 2 (before: 107k, 294k)",
+                "Auto compactions: 0",
+                "handoff at 200k: would have fired in 1 of 4 sessions",
+            ],
+        )
+
+    def test_output_is_plain_ascii(self):
+        ccbar.format_context_report(self.REPORT, 35).encode("ascii")
+
+    def test_no_sessions_skips_percentile_lines(self):
+        report = {"min_responses": 3, "count": 0, "compactions": {"manual": [], "auto": []}, "thresholds": {}}
+
+        text = ccbar.format_context_report(report, 7)
+
+        self.assertIn("Sessions: 0", text)
+        self.assertNotIn("Median", text)
+
+
+class RunContextReportTests(unittest.TestCase):
+    NOW = 1_800_000_000
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._orig_projects_dir = ccbar.PROJECTS_DIR
+        ccbar.PROJECTS_DIR = self._tmp.name
+        os.makedirs(os.path.join(self._tmp.name, "proj"))
+
+    def tearDown(self):
+        ccbar.PROJECTS_DIR = self._orig_projects_dir
+        self._tmp.cleanup()
+
+    def _write_session(self, name, lines, age_days):
+        path = os.path.join(self._tmp.name, "proj", name + ".jsonl")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        mtime = self.NOW - age_days * 86400
+        os.utime(path, (mtime, mtime))
+
+    def _run(self, argv):
+        with mock.patch.object(ccbar, "load_config", return_value=CFG), \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as stdout, \
+                mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            ccbar.run_context_report(["ccbar.py", "--context-report"] + argv, now=self.NOW)
+        return stdout.getvalue(), stderr.getvalue()
+
+    def test_skips_malformed_lines_and_files_older_than_days(self):
+        good = [json.dumps(_assistant(str(i), 50000 * i)) for i in range(1, 4)]
+        self._write_session("recent", good + ['{"type": "assist'], age_days=1)
+        self._write_session("old", good, age_days=10)
+
+        out, _ = self._run(["--days", "7"])
+
+        self.assertIn("last 7 days", out)
+        self.assertIn("Sessions: 1", out)
+        self.assertIn("Max peak: 150k", out)
+
+    def test_bad_days_values_exit_2_with_usage(self):
+        for value in (["--days", "x"], ["--days", "0"], ["--days", "-3"], ["--days"]):
+            with self.subTest(value=value):
+                with self.assertRaises(SystemExit) as exit_ctx:
+                    self._run(value)
+
+                self.assertEqual(exit_ctx.exception.code, 2)
+
+
 class MainRenderErrorTests(unittest.TestCase):
     STDIN = json.dumps({"model": {"display_name": "Opus"}})
 
