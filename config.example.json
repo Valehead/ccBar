@@ -65,17 +65,17 @@
   },
 
   "retro": {
-    "_comment": "Session retro. Once per session, when context reaches threshold_tokens or threshold_pct of the model's window (whichever comes first), the Stop hook tells Claude to run the session-retro skill. enabled: false turns it off.",
+    "_comment": "Session retro. Once per session, when context reaches threshold_tokens or threshold_pct of the model's window (whichever comes first), the Stop hook tells Claude to run the session-retro skill. It sits above the handoff: if it fires, the handoff was offered and the session kept going, and the retro looks at why. enabled: false turns it off.",
     "enabled": true,
-    "threshold_tokens": 400000,
-    "threshold_pct": 70
+    "threshold_tokens": 300000,
+    "threshold_pct": 85
   },
 
   "handoff": {
     "_comment": "Session handoff. Once per session, when context reaches threshold_tokens or threshold_pct (whichever comes first), the Stop hook tells Claude to run the session-handoff skill, which writes a plan to plans_dir and prints prompt_template with {path} set to the plan's path. enabled: false turns it off.",
     "enabled": true,
-    "threshold_tokens": 600000,
-    "threshold_pct": 85,
+    "threshold_tokens": 200000,
+    "threshold_pct": 70,
     "plans_dir": "~/.claude/plans",
     "prompt_template": "Read and execute this plan at: {path}"
   },

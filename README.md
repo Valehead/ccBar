@@ -121,14 +121,14 @@ Both are on by default. The status line watches context usage; the Stop hook the
 
 | | Session retro | Session handoff |
 |---|---|---|
-| Fires | Once per session, at 400,000 tokens or 70% of the model's context window, whichever comes first | Once per session, at 600,000 tokens or 85% of the window, whichever comes first |
-| What Claude does | Runs the `session-retro` skill: reviews the session for what went wrong, what could have been done better, and what to improve next time | Runs the `session-handoff` skill: writes a self-contained plan so a fresh session can pick up the work |
+| Fires | Once per session, at 300,000 tokens or 85% of the model's context window, whichever comes first | Once per session, at 200,000 tokens or 70% of the window, whichever comes first |
+| What Claude does | Runs the `session-retro` skill: a session insights report on what cost time, technical or not (decisions that reversed, terminology churn, misread intent, repeated corrections), and why the handoff wasn't taken when one was offered | Runs the `session-handoff` skill: writes a self-contained plan so a fresh session can pick up the work |
 | Writes | `~/.claude/retros/<date>-<folder>-<session>.md`, plus numbered memory or CLAUDE.md proposals that are applied only when you approve them | A plan in `~/.claude/plans/` named after the work, plus one line in chat to paste into a fresh session |
 | Marker | `retro ✓` on line 2 | `handoff ✓` on line 2 |
 | Run by hand | `/session-retro` | `/session-handoff` |
 | Switch off | `"retro": {"enabled": false}` | `"handoff": {"enabled": false}` |
 
-If both thresholds are crossed at once, the retro fires first and the handoff at the end of the following response. Retro lessons target auto-memory or an existing CLAUDE.md; the retro never proposes creating a CLAUDE.md inside a git repo.
+The handoff comes first, as the nudge to move to a fresh session. If the retro fires later, the handoff was offered and the session kept going, and the retro looks at why. If both thresholds are crossed at once, the handoff fires first and the retro at the end of the following response. Retro lessons target auto-memory or an existing CLAUDE.md; the retro never proposes creating a CLAUDE.md inside a git repo.
 
 **Session state.** Each session's state lives in `~/.claude/ccbar-state/<session_id>.json`: which events have crossed and fired, plus the git cache. Concurrent sessions don't interfere. Files older than 7 days are pruned. Any of them is safe to delete: deleting a session's file re-arms its retro and handoff, so they fire again on the next response while context is still over the threshold.
 
@@ -365,8 +365,8 @@ See [The status line](#the-status-line) for what each one shows. `retro` and `ha
 ```json
 "retro": {
   "enabled": true,
-  "threshold_tokens": 400000,
-  "threshold_pct": 70
+  "threshold_tokens": 300000,
+  "threshold_pct": 85
 }
 ```
 
@@ -377,8 +377,8 @@ See [The status line](#the-status-line) for what each one shows. `retro` and `ha
 ```json
 "handoff": {
   "enabled": true,
-  "threshold_tokens": 600000,
-  "threshold_pct": 85,
+  "threshold_tokens": 200000,
+  "threshold_pct": 70,
   "plans_dir": "~/.claude/plans",
   "prompt_template": "Read and execute this plan at: {path}"
 }
