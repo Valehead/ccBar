@@ -309,6 +309,8 @@ def next_steps(dest_config, guards_registered, py_display):
     if not guards_registered:
         lines.append(f"  Guard hooks (line endings, posted text, build gate): {py_display} install.py --guards"
                      "  (.NET projects: install.py --dotnet)")
+    lines.append("  Tip: after a week or two of use, ask Claude to run /ccbar-tune to fit the "
+                 "handoff and retro thresholds to your sessions.")
     return lines
 
 

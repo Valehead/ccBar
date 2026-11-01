@@ -241,6 +241,8 @@ class ApplyGuardsTests(unittest.TestCase):
 
 
 class NextStepsTests(unittest.TestCase):
+    TIP = "  Tip: after a week or two of use, ask Claude to run /ccbar-tune to fit the handoff and retro thresholds to your sessions."
+
     def test_includes_guards_hint_when_no_guards_registered(self):
         lines = install.next_steps("C:/Users/me/.claude/ccbar.config.json", False, "py -3")
 
@@ -248,12 +250,13 @@ class NextStepsTests(unittest.TestCase):
             "Optional next steps:",
             "  Customize:  C:/Users/me/.claude/ccbar.config.json",
             "  Guard hooks (line endings, posted text, build gate): py -3 install.py --guards  (.NET projects: install.py --dotnet)",
+            self.TIP,
         ])
 
     def test_omits_guards_hint_when_guards_registered(self):
         lines = install.next_steps("C:/Users/me/.claude/ccbar.config.json", True, "py -3")
 
-        self.assertEqual(lines, ["Optional next steps:", "  Customize:  C:/Users/me/.claude/ccbar.config.json"])
+        self.assertEqual(lines, ["Optional next steps:", "  Customize:  C:/Users/me/.claude/ccbar.config.json", self.TIP])
 
 
 class ResolveModeTests(unittest.TestCase):

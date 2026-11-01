@@ -80,6 +80,12 @@
     "prompt_template": "Read and execute this plan at: {path}"
   },
 
+  "tune": {
+    "_comment": "Threshold tuning nudge. Once per session, when context reaches threshold_tokens (tokens only, no percent), the Stop hook tells Claude to ask whether to run /ccbar-tune, which fits the handoff and retro thresholds to your past sessions. It never runs the skill on its own. enabled: false turns it off.",
+    "enabled": true,
+    "threshold_tokens": 700000
+  },
+
   "git": {
     "_comment": "dirty_marker: text shown after the branch when anything is uncommitted, untracked files included. timeout_ms: cap on each git call in milliseconds; a slower call is left off the bar. cache_ttl_ms: how long a git result is reused before git runs again.",
     "dirty_marker": "*",

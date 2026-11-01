@@ -2,10 +2,12 @@
 """ccBar - Claude Code status line. Reads JSON from stdin, prints two ANSI lines."""
 
 import copy
+import glob
 import io
 import json
 import os
 import re
+import statistics
 import subprocess
 import sys
 import time
@@ -89,6 +91,10 @@ DEFAULTS = {
         "threshold_pct": 70,
         "plans_dir": "~/.claude/plans",
         "prompt_template": "Read and execute this plan at: {path}",
+    },
+    "tune": {
+        "enabled": True,
+        "threshold_tokens": 700000,
     },
     "guards": {
         "line_endings": {"enabled": True},
@@ -459,7 +465,7 @@ def render(data, cfg, git_info=None, events=None, now=None):
     markers = [
         c(f"{name} done" if icons.get("ascii_fallback", False) else f"{name} ✓", colors.get(name))
         for name in EVENTS
-        if segs.get(name, True) and (events or {}).get(name, {}).get("fired")
+        if name in EVENT_SKILLS and segs.get(name, True) and (events or {}).get(name, {}).get("fired")
     ]
 
     groups = (location, "  ".join(git_parts), rate_text, *markers)
@@ -542,7 +548,7 @@ def render_subagents(data, cfg, now_ms):
 STATE_DIR = os.path.expanduser("~/.claude/ccbar-state")
 STATE_MAX_AGE_DAYS = 7
 EVENT_SKILLS = {"retro": "session-retro", "handoff": "session-handoff"}
-EVENTS = ("handoff", "retro")
+EVENTS = ("handoff", "retro", "tune")
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 
@@ -551,11 +557,20 @@ def threshold_crossed(tokens, window_size, event_cfg):
         return False
     if tokens >= event_cfg.get("threshold_tokens", 400000):
         return True
+    # tune is tokens-only: without a pct key, a full 200k window must never fire it
+    if "threshold_pct" not in event_cfg:
+        return False
     pct = (tokens / window_size * 100) if window_size else 0
-    return pct >= event_cfg.get("threshold_pct", 70)
+    return pct >= event_cfg["threshold_pct"]
 
 
 def _event_context(name, events, payload, cfg):
+    if name == "tune":
+        return (
+            f"This session's context passed {events[name].get('tokens', 0):,} tokens. "
+            "In one line, ask the user whether to run /ccbar-tune to fit the ccBar handoff and retro "
+            "thresholds to their past sessions. Do not run it unless they say yes."
+        )
     context = (
         f"This session's context passed {events[name].get('tokens', 0):,} tokens. "
         f"Before doing anything else, invoke the {EVENT_SKILLS[name]} skill with the Skill tool, "
@@ -732,6 +747,132 @@ def run_stop_hook():
 
 
 # ---------------------------------------------------------------------------
+# Context report
+# ---------------------------------------------------------------------------
+
+PROJECTS_DIR = os.path.expanduser("~/.claude/projects")
+REPORT_DEFAULT_DAYS = 35
+REPORT_STEP = 50000
+USAGE_FIELDS = ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+REPORT_USAGE = "usage: ccbar.py --context-report [--days N]  (N is a positive whole number)"
+
+
+def _session_stats(lines):
+    response_ids = set()
+    peak = 0
+    compactions = []
+    for entry in lines:
+        if not isinstance(entry, dict) or entry.get("isSidechain"):
+            continue
+        meta = entry.get("compactMetadata")
+        if isinstance(meta, dict):
+            compactions.append((meta.get("trigger"), meta.get("preTokens") or 0))
+        if entry.get("type") != "assistant":
+            continue
+        message = _as_dict(entry.get("message"))
+        usage = _as_dict(message.get("usage"))
+        response_ids.add(message.get("id"))
+        peak = max(peak, sum(usage.get(field) or 0 for field in USAGE_FIELDS))
+    return {"responses": len(response_ids), "peak": peak, "compactions": compactions}
+
+
+def _nearest_rank(sorted_values, p):
+    # Integer ceil(p/100 * n) so float rounding can't shift the rank
+    return sorted_values[-(-p * len(sorted_values) // 100) - 1]
+
+
+def context_report(sessions, cfg, min_responses=3):
+    kept = [s for s in sessions if s["responses"] >= min_responses]
+    peaks = sorted(s["peak"] for s in kept)
+    compactions = {"manual": [], "auto": []}
+    for session in kept:
+        for trigger, pre_tokens in session["compactions"]:
+            compactions.setdefault(trigger, []).append(pre_tokens)
+    thresholds = {}
+    for name in EVENTS:
+        tokens = cfg.get(name, {}).get("threshold_tokens")
+        thresholds[name] = {"threshold_tokens": tokens, "fired": sum(1 for p in peaks if p >= tokens)}
+    report = {
+        "min_responses": min_responses,
+        "count": len(peaks),
+        "compactions": compactions,
+        "thresholds": thresholds,
+    }
+    if not peaks:
+        return report
+    steps = {}
+    step = REPORT_STEP
+    while True:
+        steps[step] = sum(1 for p in peaks if p >= step)
+        if step > peaks[-1]:
+            break
+        step += REPORT_STEP
+    report.update({
+        "median": statistics.median(peaks),
+        "p75": _nearest_rank(peaks, 75),
+        "p90": _nearest_rank(peaks, 90),
+        "max": peaks[-1],
+        "steps": steps,
+    })
+    return report
+
+
+def format_context_report(report, days):
+    lines = [
+        f"ccBar context report: last {days} days, main-thread sessions with {report['min_responses']}+ responses",
+        "Percentiles are nearest-rank over each session's peak context (input + cache read + cache creation).",
+        f"Sessions: {report['count']}",
+    ]
+    if report["count"]:
+        lines += [
+            f"Median peak: {_fmt_num(report['median'])}",
+            f"p75 peak: {_fmt_num(report['p75'])}",
+            f"p90 peak: {_fmt_num(report['p90'])}",
+            f"Max peak: {_fmt_num(report['max'])}",
+        ]
+        lines += [f"Sessions reaching {_fmt_num(step)}: {n}" for step, n in report["steps"].items()]
+    for trigger, pre_tokens in report["compactions"].items():
+        detail = f" (before: {', '.join(_fmt_num(t) for t in sorted(pre_tokens))})" if pre_tokens else ""
+        lines.append(f"{trigger.capitalize()} compactions: {len(pre_tokens)}{detail}")
+    for name, t in report["thresholds"].items():
+        lines.append(
+            f"{name} at {_fmt_num(t['threshold_tokens'])}: would have fired in {t['fired']} of {report['count']} sessions"
+        )
+    return "\n".join(lines)
+
+
+def _read_jsonl(path):
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            try:
+                yield json.loads(line)
+            except ValueError:
+                # A live session's file can end on a half-written line
+                continue
+
+
+def run_context_report(argv, now=None):
+    days = REPORT_DEFAULT_DAYS
+    if "--days" in argv:
+        index = argv.index("--days")
+        value = argv[index + 1] if index + 1 < len(argv) else ""
+        try:
+            days = int(value)
+        except ValueError:
+            days = 0
+        if days <= 0:
+            print(REPORT_USAGE, file=sys.stderr)
+            sys.exit(2)
+    cutoff = (now or time.time()) - days * 86400
+    sessions = [
+        _session_stats(_read_jsonl(path))
+        for path in glob.glob(os.path.join(PROJECTS_DIR, "*", "*.jsonl"))
+        if os.path.getmtime(path) >= cutoff
+    ]
+    print(format_context_report(context_report(sessions, load_config()), days))
+
+
+# ---------------------------------------------------------------------------
 # Self-test
 # ---------------------------------------------------------------------------
 
@@ -826,6 +967,10 @@ def main():
         except Exception as e:
             print(f"ccbar --stop-hook failed: {e!r}", file=sys.stderr)
             sys.exit(1)
+        sys.exit(0)
+
+    if "--context-report" in sys.argv:
+        run_context_report(sys.argv)
         sys.exit(0)
 
     if "--subagents" in sys.argv:
