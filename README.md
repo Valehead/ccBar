@@ -130,7 +130,21 @@ Both are on by default. The status line watches context usage; the Stop hook the
 
 The handoff comes first, as the nudge to move to a fresh session. If the retro fires later, the handoff was offered and the session kept going, and the retro looks at why. If both thresholds are crossed at once, the handoff fires first and the retro at the end of the following response. Retro lessons target auto-memory or an existing CLAUDE.md; the retro never proposes creating a CLAUDE.md inside a git repo.
 
-**Session state.** Each session's state lives in `~/.claude/ccbar-state/<session_id>.json`: which events have crossed and fired, plus the git cache. Concurrent sessions don't interfere. Files older than 7 days are pruned. Any of them is safe to delete: deleting a session's file re-arms its retro and handoff, so they fire again on the next response while context is still over the threshold.
+**Session state.** Each session's state lives in `~/.claude/ccbar-state/<session_id>.json`: which events (handoff, retro, tune) have crossed and fired, plus the git cache. Concurrent sessions don't interfere. Files older than 7 days are pruned. Any of them is safe to delete: deleting a session's file re-arms its events, so they fire again on the next response while context is still over the threshold.
+
+### Tuning the thresholds
+
+The right handoff and retro thresholds depend on how long your sessions run. ccBar can measure that from your own transcripts:
+
+```
+python ccbar.py --context-report [--days N]
+```
+
+It reads the main-thread usage in `~/.claude/projects/*/*.jsonl` from the last N days (default 35) and prints, for sessions with at least 3 responses: the median, p75, p90 and max peak context (nearest-rank), how many sessions reached each 50k step, every manual and auto compaction with the context it happened at, and how many sessions the current handoff, retro and tune thresholds would have fired in. It only reads; nothing is written.
+
+The `/ccbar-tune` skill runs the report and turns it into a recommendation: handoff at the p90 peak rounded to the nearest 50k (lower if your manual compactions usually happen below that), retro 100k above it, the percent thresholds kept at 70 and 85. With fewer than 10 sessions of history it keeps your current values. It shows current against proposed and edits `~/.claude/ccbar.config.json` only after you approve, saving a `.bak` first.
+
+The installer doesn't run this for you. A third Stop hook event, `tune`, does nudge: once per session, when context passes 700,000 tokens (tokens only, so a 200k window never triggers it), Claude asks in one line whether to run `/ccbar-tune`. It never runs it unprompted and shows no marker on the bar. Switch off with `"tune": {"enabled": false}`.
 
 ---
 
@@ -386,6 +400,17 @@ See [The status line](#the-status-line) for what each one shows. `retro` and `ha
 
 - `plans_dir`: where the handoff writes its plan.
 - `prompt_template`: the line printed for you to paste into a fresh session. `{path}` becomes the plan's absolute path.
+
+### Tune
+
+```json
+"tune": {
+  "enabled": true,
+  "threshold_tokens": 700000
+}
+```
+
+- The tune nudge fires at `threshold_tokens` only; it has no percent threshold. See [Tuning the thresholds](#tuning-the-thresholds).
 
 ### Guards
 

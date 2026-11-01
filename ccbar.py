@@ -92,6 +92,10 @@ DEFAULTS = {
         "plans_dir": "~/.claude/plans",
         "prompt_template": "Read and execute this plan at: {path}",
     },
+    "tune": {
+        "enabled": True,
+        "threshold_tokens": 700000,
+    },
     "guards": {
         "line_endings": {"enabled": True},
         "posted_text": {"enabled": True, "banned": []},
@@ -461,7 +465,7 @@ def render(data, cfg, git_info=None, events=None, now=None):
     markers = [
         c(f"{name} done" if icons.get("ascii_fallback", False) else f"{name} ✓", colors.get(name))
         for name in EVENTS
-        if segs.get(name, True) and (events or {}).get(name, {}).get("fired")
+        if name in EVENT_SKILLS and segs.get(name, True) and (events or {}).get(name, {}).get("fired")
     ]
 
     groups = (location, "  ".join(git_parts), rate_text, *markers)
@@ -544,7 +548,7 @@ def render_subagents(data, cfg, now_ms):
 STATE_DIR = os.path.expanduser("~/.claude/ccbar-state")
 STATE_MAX_AGE_DAYS = 7
 EVENT_SKILLS = {"retro": "session-retro", "handoff": "session-handoff"}
-EVENTS = ("handoff", "retro")
+EVENTS = ("handoff", "retro", "tune")
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 
@@ -553,11 +557,20 @@ def threshold_crossed(tokens, window_size, event_cfg):
         return False
     if tokens >= event_cfg.get("threshold_tokens", 400000):
         return True
+    # tune is tokens-only: without a pct key, a full 200k window must never fire it
+    if "threshold_pct" not in event_cfg:
+        return False
     pct = (tokens / window_size * 100) if window_size else 0
-    return pct >= event_cfg.get("threshold_pct", 70)
+    return pct >= event_cfg["threshold_pct"]
 
 
 def _event_context(name, events, payload, cfg):
+    if name == "tune":
+        return (
+            f"This session's context passed {events[name].get('tokens', 0):,} tokens. "
+            "In one line, ask the user whether to run /ccbar-tune to fit the ccBar handoff and retro "
+            "thresholds to their past sessions. Do not run it unless they say yes."
+        )
     context = (
         f"This session's context passed {events[name].get('tokens', 0):,} tokens. "
         f"Before doing anything else, invoke the {EVENT_SKILLS[name]} skill with the Skill tool, "

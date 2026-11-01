@@ -11,7 +11,8 @@ HANDOFF_CFG = {
     "plans_dir": "~/.claude/plans",
     "prompt_template": "Read and execute this plan at: {path}",
 }
-CFG = {"retro": RETRO_CFG, "handoff": HANDOFF_CFG}
+TUNE_CFG = {"enabled": True, "threshold_tokens": 700000}
+CFG = {"retro": RETRO_CFG, "handoff": HANDOFF_CFG, "tune": TUNE_CFG}
 CROSSED_STATE = {"window_size": 1000000, "events": {"retro": {"crossed": True, "fired": False, "tokens": 510000}}}
 FIRED_STATE = {"window_size": 1000000, "events": {"retro": {"crossed": True, "fired": True, "tokens": 510000}}}
 BOTH_CROSSED_STATE = {
@@ -73,6 +74,13 @@ class ThresholdCrossedTests(unittest.TestCase):
         cfg = {**RETRO_CFG, "enabled": False}
 
         self.assertFalse(ccbar.threshold_crossed(900000, 1000000, cfg))
+
+    def test_tune_crosses_at_700k_on_1m_window(self):
+        self.assertFalse(ccbar.threshold_crossed(699999, 1000000, TUNE_CFG))
+        self.assertTrue(ccbar.threshold_crossed(700000, 1000000, TUNE_CFG))
+
+    def test_tune_never_crosses_on_full_200k_window(self):
+        self.assertFalse(ccbar.threshold_crossed(200000, 200000, TUNE_CFG))
 
 
 class StopHookOutputTests(unittest.TestCase):
@@ -146,6 +154,23 @@ class StopHookOutputTests(unittest.TestCase):
         self.assertIn(f"plans_dir={plans_dir} ", context)
         self.assertNotIn("~", context)
         self.assertIn('prompt_template="Read and execute this plan at: {path}"', context)
+
+    def test_returns_none_when_tune_disabled_even_if_crossed(self):
+        state = {"events": {"tune": {"crossed": True, "fired": False, "tokens": 710000}}}
+        cfg = {**CFG, "tune": {**TUNE_CFG, "enabled": False}}
+
+        self.assertIsNone(ccbar.stop_hook_output(PAYLOAD, state, cfg))
+
+    def test_tune_context_asks_and_invokes_no_skill(self):
+        state = {"events": {"tune": {"crossed": True, "fired": False, "tokens": 710000}}}
+
+        name, out = ccbar.stop_hook_output(PAYLOAD, state, CFG)
+
+        context = out["hookSpecificOutput"]["additionalContext"]
+        self.assertEqual(name, "tune")
+        self.assertIn("710,000 tokens", context)
+        self.assertIn("ask the user whether to run /ccbar-tune", context)
+        self.assertNotIn("Skill tool", context)
 
 
 class StateIoTests(unittest.TestCase):
@@ -293,6 +318,18 @@ class RunStopHookTests(unittest.TestCase):
         self.assertIn("session-retro", second)
         self.assertIn("handoff_fired_at=610000", second)
         self.assertEqual(third, "")
+
+    def test_fires_handoff_then_retro_then_tune_when_all_crossed(self):
+        crossed = {"crossed": True, "fired": False, "tokens": 710000}
+        state = {"window_size": 1000000, "events": {"tune": crossed, "retro": crossed, "handoff": crossed}}
+        ccbar.save_state(PAYLOAD["session_id"], state)
+
+        outputs = [self._run(PAYLOAD) for _ in range(4)]
+
+        self.assertIn("session-handoff", outputs[0])
+        self.assertIn("session-retro", outputs[1])
+        self.assertIn("/ccbar-tune", outputs[2])
+        self.assertEqual(outputs[3], "")
 
     def test_stop_hook_active_fires_nothing(self):
         ccbar.save_state(PAYLOAD["session_id"], CROSSED_STATE)
@@ -756,6 +793,12 @@ class RenderTests(unittest.TestCase):
         line2 = self._render_markers({}, {"retro": {"fired": True}, "handoff": {"fired": True}})[1]
 
         self.assertEqual(line2, "📁 repo | handoff ✓ | retro ✓")
+
+    def test_fired_tune_shows_no_marker(self):
+        lines = self._render_markers({}, {"tune": {"fired": True}})
+
+        self.assertEqual(lines[1], "📁 repo")
+        self.assertNotIn("tune", lines[0])
 
     def test_shows_handoff_done_under_ascii_fallback(self):
         line2 = self._render_markers({"icons": {"ascii_fallback": True}}, {"handoff": {"fired": True}})[1]
