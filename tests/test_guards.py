@@ -543,6 +543,60 @@ class TrimOutputTests(unittest.TestCase):
         self.assertEqual(guards.trim_output("a\n\nb\n  \nc\nd\n", n=2), "c\nd")
 
 
+class ChangedFilesTests(unittest.TestCase):
+    def changed(self, upstream=b"origin/feature\n", upstream_base=b"up\n", unpushed=b"", net=b""):
+        replies = {
+            ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"): upstream,
+            ("merge-base", "HEAD", "origin/feature"): upstream_base,
+            ("diff", "--name-only", "up..HEAD"): unpushed,
+            ("merge-base", "HEAD", "origin/HEAD"): None if net is None else b"def\n",
+            ("diff", "--name-only", "def..HEAD"): net,
+        }
+        with mock.patch.object(guards, "_git", side_effect=lambda args, cwd: replies[tuple(args)]):
+            return guards.changed_files(TOP)
+
+    def test_ordinary_commits_return_unpushed_files(self):
+        result = self.changed(unpushed=b"src/Billing/a.cs\n", net=b"src/Billing/a.cs\n")
+
+        self.assertEqual(result, ["src/Billing/a.cs"])
+
+    def test_files_merged_in_from_default_branch_are_dropped(self):
+        result = self.changed(unpushed=b"src/Billing/a.cs\nsrc/Inventory/b.cs\n", net=b"src/Billing/a.cs\n")
+
+        self.assertEqual(result, ["src/Billing/a.cs"])
+
+    def test_conflict_resolution_in_branch_file_is_kept(self):
+        result = self.changed(
+            unpushed=b"src/Billing/Billing.csproj\nsrc/Inventory/b.cs\n",
+            net=b"src/Billing/Billing.csproj\nsrc/Billing/a.cs\n",
+        )
+
+        self.assertEqual(result, ["src/Billing/Billing.csproj"])
+
+    def test_rebase_onto_default_branch_keeps_only_branch_files(self):
+        result = self.changed(
+            unpushed=b"src/Billing/a.cs\nsrc/Inventory/b.cs\nsrc/Inventory/c.cs\n",
+            net=b"src/Billing/a.cs\n",
+        )
+
+        self.assertEqual(result, ["src/Billing/a.cs"])
+
+    def test_missing_origin_head_falls_back_to_upstream_diff(self):
+        result = self.changed(unpushed=b"src/Billing/a.cs\nsrc/Inventory/b.cs\n", net=None)
+
+        self.assertEqual(result, ["src/Billing/a.cs", "src/Inventory/b.cs"])
+
+    def test_no_upstream_diffs_against_origin_head(self):
+        result = self.changed(upstream=None, net=b"src/Billing/a.cs\n")
+
+        self.assertEqual(result, ["src/Billing/a.cs"])
+
+    def test_upstream_merge_base_failure_returns_none(self):
+        result = self.changed(upstream_base=None)
+
+        self.assertIsNone(result)
+
+
 class RunBuildTests(unittest.TestCase):
     def test_tool_not_on_path_gives_none(self):
         with mock.patch("guards.shutil.which", return_value=None):
@@ -565,7 +619,7 @@ class RunBuildGateTests(unittest.TestCase):
         for name in ("setup.cfg", "a.py"):
             open(os.path.join(self.tmp.name, name), "w").close()
         self.root = os.path.normpath(self.tmp.name)
-        self.git_replies = [(self.tmp.name + "\n").encode(), b"origin/main\n", b"abc\n", b"a.py\n"]
+        self.git_replies = [(self.tmp.name + "\n").encode(), b"origin/main\n", b"abc\n", b"a.py\n", b"def\n", b"a.py\n"]
 
     def payload(self, command):
         return {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": self.tmp.name}

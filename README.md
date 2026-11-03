@@ -233,7 +233,7 @@ Details:
 - `root_marker` is one pattern or a list of patterns. The first directory holding anything that matches any of them is the root. Use `["*.sln", "*.slnx"]` rather than `"*.sln*"`, which also matches `.sln.DotSettings` files.
 - `command` is an argument list, not a shell string.
 - `{marker}` in `command` is replaced with each file in the root that matches `root_marker`, and the command runs once per file. Use it when a root can hold more than one solution, since a bare `dotnet build` refuses to pick one (MSB1011). When two matches share a base name, such as `MyApp.sln` and `MyApp.slnx`, only the one matched by the earlier pattern builds, so `["*.sln", "*.slnx"]` prefers the `.sln`. Rows without `{marker}` run once per root.
-- Unpushed commits are compared with the branch's upstream, or `origin/HEAD` when there is none. The build itself runs against the working tree.
+- Unpushed commits are compared with the branch's upstream, or `origin/HEAD` when there is none. With an upstream, a file only counts when it also differs from `origin/HEAD`, so merging or rebasing onto the default branch doesn't build projects only the default branch changed. The build itself runs against the working tree.
 - The repo is the command's working directory, or the `<dir>` of a leading `cd <dir> &&` or of `git -C <dir> push`.
 - Each project root builds once per push, or once per marker file with `{marker}`. Each build has a timeout of 840 seconds.
 - The root search only walks up. A `Directory.Build.props` at the repo root with the solutions in subfolders below it finds no root, so changing only that file builds nothing.

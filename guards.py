@@ -251,10 +251,8 @@ def _git(args, cwd):
     return r.stdout if r.returncode == 0 else None
 
 
-def changed_files(top):
-    """Return the repo-relative paths changed by unpushed commits, or None on any git failure."""
-    upstream = _git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], top)
-    ref = upstream.decode().strip() if upstream is not None else "origin/HEAD"
+def _files_since(ref, top):
+    """Return the paths changed between merge-base(HEAD, ref) and HEAD, or None on any git failure."""
     base = _git(["merge-base", "HEAD", ref], top)
     if base is None:
         return None
@@ -262,6 +260,25 @@ def changed_files(top):
     if diff is None:
         return None
     return [line for line in diff.decode("utf-8").splitlines() if line]
+
+
+def changed_files(top):
+    """Return the repo-relative paths changed by unpushed commits, or None on any git failure.
+
+    With an upstream, only paths that also differ from origin/HEAD count, so files a merge
+    from (or rebase onto) the default branch brought in don't trigger builds.
+    """
+    upstream = _git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], top)
+    if upstream is None:
+        return _files_since("origin/HEAD", top)
+    unpushed = _files_since(upstream.decode().strip(), top)
+    if unpushed is None:
+        return None
+    net = _files_since("origin/HEAD", top)
+    if net is None:
+        return unpushed
+    net = set(net)
+    return [p for p in unpushed if p in net]
 
 
 def run_build(root, command):
